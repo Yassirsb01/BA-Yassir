@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Wildlife Movement Analysis System",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "streamlit", "run", "bears/Application/map.py", "--server.port", "8501"],
+      "port": 8501
+    }
+  ]
+}

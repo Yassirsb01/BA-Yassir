@@ -11,18 +11,19 @@ __pycache__/
 Thumbs.db
 
 # Daten (zu groß / keine Code-Historie nötig)
-data/bear_pictures/
-data/animal_data/
-bear_simulation/database.db
+**/data/bear_pictures/
+**/data/animal_data/
+**/bear_simulation/data/database.db
+**/bear_simulation/2024Bear/
 
 # Logs
 *.log
 
 # Email Extractor Secrets (NICHT ins Git!)
-email_extractor/token_cache*
-email_extractor/*.token
-email_extractor/.env
-email_extractor/config*.json
+**/email_extractor/token_cache*
+**/email_extractor/*.token
+**/email_extractor/.env
+**/email_extractor/config*.json
 
 # IDE
 .vscode/

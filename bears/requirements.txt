@@ -1,0 +1,14 @@
+streamlit
+pandas
+numpy
+plotly
+mysql-connector-python
+pyproj
+pillow
+pytesseract
+polars
+openpyxl
+geopy
+easyocr
+python-dotenv
+requests

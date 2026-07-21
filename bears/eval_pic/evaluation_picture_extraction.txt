@@ -1,0 +1,85 @@
+bild durch gemini generiert
+per email geschickt
+System erkennt neue mail und nimmt das bild und ekennt bear
+bild wird in der DB gespeichert.
+timestamp wurde nicht erkannt !!! Problem = bild wird in streamlit nicht angezeigt. weil kein timestamp
+
+
+
+Schritte Evaluation:
+
+Evaluation & Optimierung: Email-zu-Streamlit Workflow
+Test-Setup
+
+Generierung realistisches Wildkamera-Testbild via Gemini (Braunbär mit AI-Detection-Box, Kamera-Overlay)
+Dateiname: 003015_t_260520_IMAG0142.jpg (Device 003015, Datum 20.05.2026)
+Versand per Email an aizuproject@oth-regensburg.de
+System empfängt Email, erkennt "bear" via OCR
+Bild wird in bears_images_unified gespeichert
+Timestamp nicht erkannt → Bild nicht in Streamlit sichtbar
+
+Identifizierte Probleme & Lösungen
+Problem 1: Device nicht im Dropdown sichtbar
+
+Device 003015 in DB vorhanden, aber nicht in Streamlit-Dropdown
+Ursache: SQL ORDER BY id sortiert alphanumerisch statt numerisch
+Lösung: ORDER BY CAST(id AS UNSIGNED)
+
+Problem 2: Bild in DB aber "No images found"
+
+Anthony's System schreibt in bears_images_unified
+Japan-System las aus veralteter Tabelle image_metadata
+Lösung: Japan-System auf bears_images_unified umgestellt
+
+Problem 3: Image Type Mismatch
+
+Bild als image_type='trail' gespeichert (Filename enthält t)
+User klickte "Load Device Images" → suchte image_type='device'
+Lösung: Korrektes Laden über "Load Trail Images"
+
+Problem 4: parsed_successfully = 0
+
+OCR erkannte keinen Timestamp im Bild-Overlay
+Query filtert WHERE parsed_successfully = 1
+Bild wurde herausgefiltert
+
+Problem 5: Timestamp = NULL
+
+Date/Time Filter in Sidebar filtert timestamp IS NOT NULL
+NULL-Timestamps ausgeschlossen
+Ursache: OCR konnte Timestamp nicht aus Bild extrahieren
+
+Problem 6: Filename-Pattern nicht erkannt
+
+Code extrahierte Timestamp nur aus Format 2: YYYY.MM.DD.HHMM
+Format 1: t_YYMMDD nicht implementiert
+Lösung: Erweiterte extract_filename_information() Methode
+
+Implementierte Verbesserungen
+Timestamp-Extraktion Fallback-Hierarchie:
+
+Primär: OCR aus Bild-Overlay
+Sekundär Format 2: YYYY.MM.DD.HHMM
+Sekundär Format 1: t_YYMMDD (neu implementiert)
+Default: 12:00:00 wenn nur Datum verfügbar
+
+Datenbank-Konsolidierung:
+
+Alle Systeme lesen/schreiben aus bears_images_unified
+Schema: device_id, filename, image_bytes, image_type, source, timestamp, parsed_successfully
+
+Cache-Management:
+
+Refresh-Button in Sidebar implementiert
+Manuelles Aktualisieren der Device-Liste ohne Streamlit-Neustart
+
+Erfolgreicher Re-Test
+
+Dateiname: 199999_t_260521_IMAG0144.jpg
+Format: JPG statt PNG (bessere OCR-Erkennung)
+Detection-Box: Blau statt Grün (besserer Kontrast)
+Timestamp automatisch aus Bild extrahiert: 2026-05-20 14:35:22
+Fallback aus Filename: 2026-05-21 12:00:00
+parsed_successfully = 1 korrekt gesetzt
+Bild in Streamlit sichtbar und ladbar
+Device automatisch in bears_images_unified angelegt

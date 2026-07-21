@@ -1,0 +1,49 @@
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  POETRY_HTTP_TIMEOUT: 600
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - .cache/pip
+    - .venv/
+    - /home/gitlab-runner/.cache/pypoetry
+
+stages:
+  - test
+  - deploy
+
+before_script:
+  - python3 --version
+  - curl -sSL https://install.python-poetry.org | python3 -
+  - export PATH="$HOME/.local/bin:$PATH"
+  - poetry --version
+  - poetry config virtualenvs.in-project true
+  - poetry config installer.max-workers 10
+  - poetry config installer.no-binary "numpy,opencv-python-headless"
+  - poetry install --no-root --without ocr
+
+test:docs:
+  stage: test
+  tags:
+    - project_runner
+  script:
+    - cd docs
+    - poetry run make html
+  artifacts:
+    paths:
+      - docs/build/html
+    expire_in: 1 hour
+
+pages:
+  stage: deploy
+  tags:
+    - project_runner
+  script:
+    - cd docs
+    - poetry run make html
+    - mkdir -p ../public
+    - cp -r build/html/* ../public/
+  artifacts:
+    paths:
+      - public

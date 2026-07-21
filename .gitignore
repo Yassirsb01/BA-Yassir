@@ -1,0 +1,29 @@
+# Virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Daten (zu groß / keine Code-Historie nötig)
+data/bear_pictures/
+data/animal_data/
+bear_simulation/database.db
+
+# Logs
+*.log
+
+# Email Extractor Secrets (NICHT ins Git!)
+email_extractor/token_cache*
+email_extractor/*.token
+email_extractor/.env
+email_extractor/config*.json
+
+# IDE
+.vscode/
+.idea/

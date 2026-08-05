@@ -54,6 +54,8 @@ def render_maplibre(
     japan=None,
     carpathian=None,
     simulation=None,
+    wolf_lynx=None,
+    gbif_bears=None,
     basemap: str = "Liberty",
     center=None,
     zoom: float = None,
@@ -64,6 +66,8 @@ def render_maplibre(
     japan = japan or {}
     carpathian = carpathian or {}
     simulation = simulation or {}
+    wolf_lynx = wolf_lynx or {}
+    gbif_bears = gbif_bears or {}
 
     jp_deterrents = japan.get("deterrents", _empty_fc())
     jp_markers    = japan.get("markers", _empty_fc())
@@ -72,10 +76,16 @@ def render_maplibre(
     cp_paths      = carpathian.get("paths", _empty_fc())
     sim_points    = simulation.get("points", _empty_fc())
     sim_paths     = simulation.get("paths", _empty_fc())
+    # wolf_lynx / gbif_bears kommen bereits als fertige FeatureCollection
+    # (nicht wie die anderen als dict mit Unterkategorien) -> direkt uebernehmen.
+    wolf_lynx_fc  = wolf_lynx if wolf_lynx.get("type") == "FeatureCollection" else _empty_fc()
+    gbif_bears_fc = gbif_bears if gbif_bears.get("type") == "FeatureCollection" else _empty_fc()
 
     has_japan = bool(japan)
     has_carpathian = bool(carpathian)
     has_simulation = bool(simulation)
+    has_wolf_lynx = bool(wolf_lynx_fc.get("features"))
+    has_gbif_bears = bool(gbif_bears_fc.get("features"))
 
     if center is None:
         center = (45.0, 80.0)
@@ -96,6 +106,8 @@ def render_maplibre(
         "cp_paths":      json.dumps(cp_paths),
         "sim_points":    json.dumps(sim_points),
         "sim_paths":     json.dumps(sim_paths),
+        "wolf_lynx":     json.dumps(wolf_lynx_fc),
+        "gbif_bears":    json.dumps(gbif_bears_fc),
     }
 
     # Welche Layer sollen beim Rendern schon angehakt sein?
@@ -127,6 +139,18 @@ def render_maplibre(
         checkbox_rows += (f'<label><input type="checkbox" id="tg-simulation"{chk} /> '
                           f'Simulation <span class="cnt">{n}</span>'
                           f'<span class="dot" style="background:#e8830c"></span></label>')
+    if has_wolf_lynx:
+        n = len(wolf_lynx_fc.get("features", []))
+        chk = " checked" if "wolf_lynx" in default_checked else ""
+        checkbox_rows += (f'<label><input type="checkbox" id="tg-wolf-lynx"{chk} /> '
+                          f'Wolf/Luchs (BfN) <span class="cnt">{n}</span>'
+                          f'<span class="dot" style="background:#5b3a29"></span></label>')
+    if has_gbif_bears:
+        n = len(gbif_bears_fc.get("features", []))
+        chk = " checked" if "gbif_bears" in default_checked else ""
+        checkbox_rows += (f'<label><input type="checkbox" id="tg-gbif-bears"{chk} /> '
+                          f'Bär-Sichtungen (GBIF) <span class="cnt">{n}</span>'
+                          f'<span class="dot" style="background:#c77b2e"></span></label>')
     if not checkbox_rows:
         checkbox_rows = '<div class="muted">Keine Daten geladen.</div>'
 
@@ -187,7 +211,9 @@ def render_maplibre(
       cp_points:     {data["cp_points"]},
       cp_paths:      {data["cp_paths"]},
       sim_points:    {data["sim_points"]},
-      sim_paths:     {data["sim_paths"]}
+      sim_paths:     {data["sim_paths"]},
+      wolf_lynx:     {data["wolf_lynx"]},
+      gbif_bears:    {data["gbif_bears"]}
     }};
 
     const GROUPS = {{
@@ -196,7 +222,11 @@ def render_maplibre(
       carpathian: {{ id:'tg-carpathian', layers:['cp-points','cp-paths'],
                      fcs:[DATA.cp_points, DATA.cp_paths] }},
       simulation: {{ id:'tg-simulation', layers:['sim-points','sim-paths'],
-                     fcs:[DATA.sim_points, DATA.sim_paths] }}
+                     fcs:[DATA.sim_points, DATA.sim_paths] }},
+      wolf_lynx:  {{ id:'tg-wolf-lynx',  layers:['wolf-lynx-fill','wolf-lynx-line'],
+                     fcs:[DATA.wolf_lynx] }},
+      gbif_bears: {{ id:'tg-gbif-bears', layers:['gbif-bears-points'],
+                     fcs:[DATA.gbif_bears] }}
     }};
 
     const map = new maplibregl.Map({{
@@ -289,6 +319,8 @@ def render_maplibre(
       addSrc('cp_paths',      DATA.cp_paths);
       addSrc('sim_points',    DATA.sim_points);
       addSrc('sim_paths',     DATA.sim_paths);
+      addSrc('wolf_lynx',     DATA.wolf_lynx);
+      addSrc('gbif_bears',    DATA.gbif_bears);
 
       // JAPAN
       addLayerSafe({{ id:'jp-polygons-fill', type:'fill', source:'jp_polygons',
@@ -324,6 +356,22 @@ def render_maplibre(
           'circle-stroke-width': ['case',['==',['get','type'],'real'],2,1],
           'circle-stroke-color': '#fff'
         }} }});
+
+      // WOLF/LUCHS (BfN, besetzte 10x10km Rasterzellen als Polygone).
+      // Bewusst nur duenner Umriss statt kraeftiger Flaechenfuellung: die
+      // Zelle bedeutet "irgendwo hier mind. 1 C1/C2-Nachweis", nicht eine
+      // praezise Position. Eine kraeftige Fuellung wuerde eine Genauigkeit
+      // vortaeuschen, die die Daten nicht hergeben - und mehrere angrenzende
+      // Zellen wirken sonst wie eine durchgehende Flaeche ("Blanket-Effekt").
+      addLayerSafe({{ id:'wolf-lynx-fill', type:'fill', source:'wolf_lynx',
+        paint:{{ 'fill-color':['coalesce',['get','color'],'#5b3a29'],'fill-opacity':0.08 }} }});
+      addLayerSafe({{ id:'wolf-lynx-line', type:'line', source:'wolf_lynx',
+        paint:{{ 'line-color':['coalesce',['get','color'],'#5b3a29'],'line-width':1.2,'line-opacity':0.8 }} }});
+
+      // BÄR-SICHTUNGEN (GBIF, Punkte DE+RO)
+      addLayerSafe({{ id:'gbif-bears-points', type:'circle', source:'gbif_bears',
+        paint:{{ 'circle-radius':5,'circle-opacity':0.85,'circle-stroke-width':1,'circle-stroke-color':'#fff',
+                 'circle-color':['coalesce',['get','color'],'#5b3a29'] }} }});
     }}
 
     // Sichtbarkeit aus den Checkboxen (DOM bleibt erhalten) wiederherstellen
@@ -369,6 +417,26 @@ def render_maplibre(
         if (isReal) details += '<b>Zeit:</b> '+(p.timestamp||'')+'<br><b>Saison:</b> '+(p.season||'')+'<br><b>Schrittlänge:</b> '+(p.length_m?Math.round(p.length_m)+'m':'')+'<br>';
         if (isAlt)  details += '<b>Schritt #:</b> '+(p.step_idx||'')+'<br><b>Sim. Länge:</b> '+(p.length_m?Math.round(p.length_m)+'m':'')+'<br><b>Richtung:</b> '+(p.angle?Math.round(p.angle)+'°':'')+'<br>';
         pop(e,'<h3>'+title+' <span style=\\"display:inline-block;width:10px;height:10px;border-radius:50%;background:'+col+';vertical-align:middle\\"></span></h3>'+details); }});
+
+      map.on('click','wolf-lynx-fill',(e)=>{{ const p=e.features[0].properties||{{}};
+        const isWolf = (p.REFERENCESPECIESNAME||'').toLowerCase().includes('lupus') || p.species==='wolf';
+        const title  = isWolf ? 'Wolf' : 'Luchs';
+        pop(e,'<h3>'+title+' (BfN-Monitoring)</h3>'+
+              '<b>Rasterzelle:</b> '+(p.ID_LOCALID||p.GmlID||'')+
+              '<br><span style=\\"font-size:12px;color:#555\\">Mind. 1 bestätigter Nachweis (C1/C2: Genetik, '+
+              'Foto, Spur, Riss o.ä.) irgendwo in dieser 10x10km-Zelle - keine exakte Position.</span>'+
+              '<br><span style=\\"font-size:11px;color:#777\\">Quelle: geodienste.bfn.de, kostenfrei nutzbar</span>'); }});
+      map.on('mouseenter','wolf-lynx-fill',()=>map.getCanvas().style.cursor='pointer');
+      map.on('mouseleave','wolf-lynx-fill',()=>map.getCanvas().style.cursor='');
+
+      map.on('click','gbif-bears-points',(e)=>{{ const p=e.features[0].properties||{{}};
+        const link = p.gbif_url ? '<br><a href=\\"'+p.gbif_url+'\\" target=\\"_blank\\" rel=\\"noopener\\">Datensatz auf GBIF ansehen</a>' : '';
+        pop(e,'<h3>'+(p.scientific_name||'Ursus arctos')+'</h3>'+
+              '<b>Land:</b> '+(p.country||'')+
+              '<br><b>Datum:</b> '+(p.event_date||'')+
+              '<br><b>Quelle:</b> '+(p.institution||'')+link); }});
+      map.on('mouseenter','gbif-bears-points',()=>map.getCanvas().style.cursor='pointer');
+      map.on('mouseleave','gbif-bears-points',()=>map.getCanvas().style.cursor='');
     }}
 
     // -------------------------------------------------------
@@ -395,6 +463,9 @@ def render_maplibre(
           else if (g.type === 'Polygon') {{
             g.coordinates.forEach(r => r.forEach(c => {{ if (isValidCoord(c)) {{ b.extend(c); has = true; }} }}));
           }}
+          else if (g.type === 'MultiPolygon') {{
+            g.coordinates.forEach(poly => poly.forEach(r => r.forEach(c => {{ if (isValidCoord(c)) {{ b.extend(c); has = true; }} }})));
+          }}
         }});
       }});
       return has ? b : null;
@@ -404,7 +475,9 @@ def render_maplibre(
     const ZOOM_TARGETS = {{
       japan:      {{ center: [139.93, 37.48], zoom: 11 }},
       carpathian: {{ center: null, zoom: 8 }},   // dynamisch via fitBounds (Daten haben valide Koordinaten)
-      simulation: {{ center: null, zoom: 8 }}    // dynamisch via fitBounds
+      simulation: {{ center: null, zoom: 8 }},   // dynamisch via fitBounds
+      wolf_lynx:  {{ center: null, zoom: 6 }},   // dynamisch, deckt ganz Deutschland ab
+      gbif_bears: {{ center: null, zoom: 5 }}    // dynamisch, deckt DE+RO ab
     }};
 
     function navigateToGroup(groupKey) {{
@@ -432,7 +505,7 @@ def render_maplibre(
         const cb = document.getElementById(GROUPS[key].id);
         if (cb) cb.addEventListener('change', e => onToggle(key, e.target.checked));
       }};
-      bind('japan'); bind('carpathian'); bind('simulation');
+      bind('japan'); bind('carpathian'); bind('simulation'); bind('wolf_lynx'); bind('gbif_bears');
 
       // -------------------------------------------------------
       // FIX 1: Kartenstil-Wechsel

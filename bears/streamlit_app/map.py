@@ -283,12 +283,46 @@ except Exception as e:
 
 
 # ============================================================
+# WOLF/LUCHS (BfN) + BÄR-SICHTUNGEN (GBIF) - externe, oeffentliche APIs
+# Kein VPN noetig (anders als die MariaDB-Systeme), aber eigener Haken in
+# der Sidebar, falls jemand offline arbeitet oder die Anfragen bewusst
+# vermeiden will.
+# ============================================================
+wolf_lynx_data = None
+gbif_bears_data = None
+
+with st.sidebar.expander("Externe Vergleichsdaten", expanded=False):
+    load_external = st.checkbox(
+        "Wolf/Luchs (BfN) + Bär-Sichtungen (GBIF) laden",
+        value=True,
+        help="Kostenfreie, oeffentliche Datenquellen. Wolf/Luchs vom "
+             "Bundesamt fuer Naturschutz, Baer-Sichtungen von GBIF "
+             "(Deutschland + Rumaenien).",
+    )
+
+if load_external:
+    try:
+        from import_bfn_wolf_lynx import get_wolf_lynx_geojson
+        wolf_lynx_data = get_wolf_lynx_geojson()
+    except Exception as e:
+        st.sidebar.warning(f"Wolf/Luchs-Daten (BfN) nicht verfügbar: {e}")
+
+    try:
+        from import_gbif_bears import get_gbif_bears_geojson
+        gbif_bears_data = get_gbif_bears_geojson()
+    except Exception as e:
+        st.sidebar.warning(f"Bär-Sichtungen (GBIF) nicht verfügbar: {e}")
+
+
+# ============================================================
 # Karte rendern (Startansicht leer; Auswahl + Zoom auf der Karte)
 # ============================================================
 ml.render_maplibre(
     japan=japan_data,
     carpathian=carpathian_data,
     simulation=simulation_data,
+    wolf_lynx=wolf_lynx_data,
+    gbif_bears=gbif_bears_data,
     basemap=_restored_basemap,       # zuletzt gewaehlter Stil, sonst "Liberty"
     center=_restored_center,          # zuletzt gesehene Kameraposition, sonst Default
     zoom=_restored_zoom,

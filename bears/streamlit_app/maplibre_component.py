@@ -57,6 +57,8 @@ def render_maplibre(
     basemap: str = "Liberty",
     center=None,
     zoom: float = None,
+    initial_visible: set = None,
+    refit_on_load: set = None,
     height: int = 650,
 ):
     japan = japan or {}
@@ -84,6 +86,7 @@ def render_maplibre(
         basemap = "Liberty"
 
     styles_js = json.dumps(_build_styles())
+    refit_json = json.dumps(sorted(refit_on_load)) if refit_on_load else "[]"
 
     data = {
         "jp_deterrents": json.dumps(jp_deterrents),
@@ -95,22 +98,33 @@ def render_maplibre(
         "sim_paths":     json.dumps(sim_paths),
     }
 
+    # Welche Layer sollen beim Rendern schon angehakt sein?
+    # - initial_visible kommt aus den URL-Query-Parametern (letzter bekannter
+    #   Zustand vom Client) -> exakt das wiederherstellen.
+    # - Erststart (noch keine URL-Parameter, initial_visible is None) ->
+    #   alte Default-Logik: Simulation vorausgewaehlt, Rest aus.
+    if initial_visible is None:
+        default_checked = {"simulation"} if has_simulation else set()
+    else:
+        default_checked = set(initial_visible)
+
     checkbox_rows = ""
     if has_japan:
         n = len(jp_deterrents.get("features", [])) + len(jp_markers.get("features", []))
-        checkbox_rows += (f'<label><input type="checkbox" id="tg-japan" /> '
+        chk = " checked" if "japan" in default_checked else ""
+        checkbox_rows += (f'<label><input type="checkbox" id="tg-japan"{chk} /> '
                           f'Japan Deterrents <span class="cnt">{n}</span>'
                           f'<span class="dot" style="background:#d33"></span></label>')
     if has_carpathian:
         n = len(cp_points.get("features", []))
-        checkbox_rows += (f'<label><input type="checkbox" id="tg-carpathian" /> '
+        chk = " checked" if "carpathian" in default_checked else ""
+        checkbox_rows += (f'<label><input type="checkbox" id="tg-carpathian"{chk} /> '
                           f'Carpathian GPS <span class="cnt">{n}</span>'
                           f'<span class="dot" style="background:#1d6fb8"></span></label>')
     if has_simulation:
         n = len(sim_points.get("features", []))
-        # Simulation-Layer ist standardmäßig sichtbar (checked), damit er nach
-        # jedem Filter-"Anwenden" automatisch auf der Karte erscheint.
-        checkbox_rows += (f'<label><input type="checkbox" id="tg-simulation" checked /> '
+        chk = " checked" if "simulation" in default_checked else ""
+        checkbox_rows += (f'<label><input type="checkbox" id="tg-simulation"{chk} /> '
                           f'Simulation <span class="cnt">{n}</span>'
                           f'<span class="dot" style="background:#e8830c"></span></label>')
     if not checkbox_rows:
@@ -162,6 +176,10 @@ def render_maplibre(
 
   <script>
     const STYLES = {styles_js};
+    // Layer, deren Daten sich seit dem letzten Rendern geaendert haben
+    // (z.B. anderer Baer/Zeitraum ausgewaehlt) -> beim Laden automatisch
+    // dorthin navigieren, auch wenn der Layer schon vorher sichtbar war.
+    const REFIT_ON_LOAD = {refit_json};
     const DATA = {{
       jp_deterrents: {data["jp_deterrents"]},
       jp_markers:    {data["jp_markers"]},
@@ -188,6 +206,50 @@ def render_maplibre(
       zoom: {zoom}
     }});
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+    // -------------------------------------------------------
+    // Zustand (Center/Zoom/Basemap/sichtbare Layer) in die URL des
+    // umgebenden Streamlit-Fensters schreiben. So kann Python beim naechsten
+    // Rerun (z.B. Filter "Anwenden") ueber st.query_params genau dort wieder
+    // starten, statt die Karte auf die Default-Ansicht zurueckzusetzen.
+    // Kein echter Rueckkanal (das koennte nur eine declare_component()-
+    // Loesung), aber ausreichend, um den Kamera-/Layer-Zustand zwischen
+    // Reruns "mitzunehmen".
+    // -------------------------------------------------------
+    let currentStyleName = "{basemap}";
+
+    function debounce(fn, wait) {{
+      let t;
+      return (...args) => {{ clearTimeout(t); t = setTimeout(() => fn(...args), wait); }};
+    }}
+
+    function saveStateToUrl() {{
+      try {{
+        const parentWin = window.parent;
+        if (!parentWin || parentWin === window) return;
+
+        const params = new URLSearchParams(parentWin.location.search);
+        const c = map.getCenter();
+        params.set('m_lat', c.lat.toFixed(5));
+        params.set('m_lng', c.lng.toFixed(5));
+        params.set('m_zoom', map.getZoom().toFixed(2));
+        params.set('m_style', currentStyleName);
+
+        const visible = Object.keys(GROUPS).filter(k => {{
+          const cb = document.getElementById(GROUPS[k].id);
+          return cb && cb.checked;
+        }});
+        params.set('m_layers', visible.join(','));
+
+        const newUrl = parentWin.location.pathname + '?' + params.toString() + parentWin.location.hash;
+        parentWin.history.replaceState(null, '', newUrl);
+      }} catch (e) {{
+        // z.B. Cross-Origin-Restriktion -> stumm ignorieren, Karte bleibt
+        // trotzdem normal nutzbar, nur ohne Zustands-Persistenz.
+      }}
+    }}
+
+    const saveStateDebounced = debounce(saveStateToUrl, 400);
 
     // -------------------------------------------------------
     // FIX 2: ID des ersten Symbol-Layers finden.
@@ -345,20 +407,24 @@ def render_maplibre(
       simulation: {{ center: null, zoom: 8 }}    // dynamisch via fitBounds
     }};
 
+    function navigateToGroup(groupKey) {{
+      const g = GROUPS[groupKey];
+      const t = ZOOM_TARGETS[groupKey];
+      if (t.center) {{
+        // Festes Ziel (z.B. Japan) -> kein fitBounds noetig
+        map.flyTo({{ center: t.center, zoom: t.zoom, duration: 800 }});
+      }} else {{
+        // Dynamisch: fitBounds aus den Daten
+        const b = boundsOf(g.fcs);
+        if (b) map.fitBounds(b, {{ padding: 60, maxZoom: 12, duration: 800 }});
+      }}
+    }}
+
     function onToggle(groupKey, checked) {{
       const g = GROUPS[groupKey];
       setVis(g.layers, checked);
-      if (checked) {{
-        const t = ZOOM_TARGETS[groupKey];
-        if (t.center) {{
-          // Festes Ziel (z.B. Japan) -> kein fitBounds noetig
-          map.flyTo({{ center: t.center, zoom: t.zoom, duration: 800 }});
-        }} else {{
-          // Dynamisch: fitBounds aus den Daten
-          const b = boundsOf(g.fcs);
-          if (b) map.fitBounds(b, {{ padding: 60, maxZoom: 12, duration: 800 }});
-        }}
-      }}
+      if (checked) navigateToGroup(groupKey);
+      saveStateToUrl();
     }}
 
     function wireControls() {{
@@ -376,12 +442,18 @@ def render_maplibre(
       // -------------------------------------------------------
       const sel = document.getElementById('basemap-select');
       if (sel) sel.addEventListener('change', e => {{
+        currentStyleName = e.target.value;
         map.setStyle(STYLES[e.target.value], {{ diff: false }});
         map.once('style.load', () => {{
           addSourcesAndLayers();
           applyVisibilityFromCheckboxes();
         }});
+        saveStateToUrl();
       }});
+
+      // Kamera-Position (Pan/Zoom) laufend merken, debounced damit nicht
+      // bei jedem einzelnen Drag-Frame geschrieben wird.
+      map.on('moveend', saveStateDebounced);
     }}
 
     // Initialer Start: map.on('load') feuert genau einmal
@@ -390,6 +462,18 @@ def render_maplibre(
       applyVisibilityFromCheckboxes();
       wirePopups();
       wireControls();
+
+      // Fuer bereits sichtbare Layer, deren Daten sich geaendert haben
+      // (z.B. neuer Baer/Zeitraum via "Anwenden"), zur neuen Position fliegen -
+      // sonst bleibt die Kamera an der alten Stelle stehen (Persistenz-Fix),
+      // obwohl dort gar keine Daten des neu gewaehlten Filters liegen.
+      let didRefit = false;
+      REFIT_ON_LOAD.forEach(key => {{
+        const g = GROUPS[key];
+        const cb = g ? document.getElementById(g.id) : null;
+        if (cb && cb.checked) {{ navigateToGroup(key); didRefit = true; }}
+      }});
+      if (didRefit) saveStateToUrl();
     }});
   </script>
 </body>

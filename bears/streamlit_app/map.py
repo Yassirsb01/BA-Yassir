@@ -25,6 +25,58 @@ import maplibre_component as ml
 st.set_page_config(page_title="Wildlife Movement Analysis System", layout="wide")
 
 # ============================================================
+# Kartenzustand aus der URL wiederherstellen (falls vorhanden).
+# maplibre_component.py schreibt Center/Zoom/Basemap/sichtbare Layer bei
+# jeder Interaktion in die Query-Parameter (window.parent.history.replaceState).
+# Bei einem Rerun (z.B. Filter "Anwenden") sind sie hier schon in der URL und
+# koennen ausgelesen werden -> Karte startet an der zuletzt gesehenen Stelle
+# statt wieder bei der Default-Ansicht.
+# ============================================================
+def _restore_map_state():
+    qp = st.query_params
+
+    def _qf(key):
+        v = qp.get(key)
+        try:
+            return float(v) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    lat, lng, zoom = _qf("m_lat"), _qf("m_lng"), _qf("m_zoom")
+    center = (lat, lng) if (lat is not None and lng is not None) else None
+
+    basemap = qp.get("m_style") or "Liberty"
+    if basemap not in ml.BASEMAP_NAMES:
+        basemap = "Liberty"
+
+    layers_raw = qp.get("m_layers", "")
+    # Bei allererstem Aufruf (kein Query-Param vorhanden) -> None zurueckgeben,
+    # damit render_maplibre() auf die alte Default-Logik (Simulation an) faellt.
+    initial_visible = set(layers_raw.split(",")) if layers_raw else None
+
+    return center, zoom, basemap, initial_visible
+
+
+_restored_center, _restored_zoom, _restored_basemap, _restored_visible = _restore_map_state()
+
+# Layer, deren zugrunde liegende Daten sich in diesem Rerun geaendert haben
+# (z.B. anderer Baer/Zeitraum gewaehlt) -> sollen automatisch angeflogen
+# werden, auch wenn sie schon vorher sichtbar waren (siehe Carpathian-/
+# Simulation-Bloecke weiter unten).
+_refit_groups = set()
+
+
+def _mark_refit_if_changed(session_key: str, new_signature, group_name: str):
+    """Vergleicht die aktuelle Filter-Signatur mit der vom letzten Rerun.
+    Bei Aenderung wird group_name zu _refit_groups hinzugefuegt, damit die
+    Karte beim naechsten Laden dorthin navigiert statt an der alten Kamera-
+    position (aus der URL-Persistenz) stehen zu bleiben."""
+    old_signature = st.session_state.get(session_key)
+    if old_signature != new_signature:
+        _refit_groups.add(group_name)
+    st.session_state[session_key] = new_signature
+
+# ============================================================
 # Sidebar: Status-Widget + Kartenstil
 # ============================================================
 with st.sidebar:
@@ -118,6 +170,11 @@ try:
                 map_type=map_type,
                 max_points_per_bear=max_pts,
             )
+        _mark_refit_if_changed(
+            "cp_filter_sig",
+            (tuple(sorted(sel_bears)), tuple(sorted(sel_seasons)), str(sd), str(ed), map_type, max_pts),
+            "carpathian",
+        )
 
 except Exception as e:
     st.error(f"Fehler beim Laden der Carpathian-Daten: {e}")
@@ -197,6 +254,11 @@ try:
                 season=_sim_season,
                 num_alternatives=_sim_num_alt,
             )
+        _mark_refit_if_changed(
+            "sim_filter_sig",
+            (str(_sim_bear), _sim_season, _sim_num_alt),
+            "simulation",
+        )
         # Status-Caption
         feats  = simulation_data.get("points", {}).get("features", [])
         n_real = sum(1 for f in feats if f["properties"].get("type") == "real")
@@ -227,9 +289,11 @@ ml.render_maplibre(
     japan=japan_data,
     carpathian=carpathian_data,
     simulation=simulation_data,
-    basemap="Liberty",   # Start-Stil; Wechsel passiert auf der Karte
-    center=None,
-    zoom=None,
+    basemap=_restored_basemap,       # zuletzt gewaehlter Stil, sonst "Liberty"
+    center=_restored_center,          # zuletzt gesehene Kameraposition, sonst Default
+    zoom=_restored_zoom,
+    initial_visible=_restored_visible,  # zuletzt sichtbare Layer, sonst alte Default-Logik
+    refit_on_load=_refit_groups,      # Layer mit geaenderten Filterdaten -> neu hinfliegen
     height=800,
 )
 

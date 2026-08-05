@@ -1,0 +1,126 @@
+\documentclass[12pt,a4paper]{report}
+\usepackage[utf8]{inputenc}
+\usepackage[ngerman]{babel}
+\usepackage{geometry}
+\geometry{a4paper, margin=2.5cm}
+\usepackage{setspace}
+\onehalfspacing
+
+\begin{document}
+
+% ==================== TITELSEITE ====================
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+    
+    {\LARGE\bfseries Ostbayerische Technische Hochschule Regensburg}\\[0.5cm]
+    {\Large Fakultät Informatik und Mathematik}\\[3cm]
+    
+    {\huge\bfseries Multi-Layer Visualisierung von Tiersichtungsdaten in einer Online-Kartenplattform}\\[3cm]
+    
+    {\Large Bachelorarbeit}\\[1cm]
+    
+    vorgelegt von\\[0.5cm]
+    {\Large\bfseries Yassir Sbai}\\[0.3cm]
+    Matrikelnummer: 3341177\\[3cm]
+    
+    Betreuer und Prüfer: Prof. Dr. Jan Dünnweber\\
+    
+    
+    \vfill
+    
+    Regensburg, \today
+\end{titlepage}
+
+% ==================== INHALTSVERZEICHNIS ====================
+\tableofcontents
+\newpage
+
+% ==================== KAPITEL ====================
+% claude begin
+\chapter{Einleitung}
+
+\section{Motivation und Problemstellung}
+
+Die Erforschung und der Schutz frei lebender Wildtierpopulationen sind zunehmend auf digitale Werkzeuge angewiesen, die räumliche und zeitliche Bewegungsmuster sichtbar und analysierbar machen. Insbesondere bei großen, potenziell konfliktträchtigen Arten wie Bären fallen im Rahmen von Forschungsprojekten heterogene Datenquellen an: GPS-Telemetriedaten frei lebender Tiere, automatisiert erfasste Kamerabilder von Abschreckungssystemen sowie modellbasierte Simulationsdaten zur Vorhersage von Bewegungsmustern. Damit diese Daten für ein Forschungsteam nutzbar werden, müssen sie nicht nur gespeichert, sondern auch verständlich visualisiert werden — im Regelfall auf einer interaktiven Karte, die räumliche Zusammenhänge intuitiv erfassbar macht.
+
+Im Rahmen einer vorausgegangenen Kooperation zwischen der Ostbayerischen Technischen Hochschule (OTH) Regensburg und einer Partnerhochschule wurden im Kontext der Bärenforschung mehrere eigenständige Teilsysteme entwickelt: ein System zur Verwaltung und Kartierung von Bärenabschreckungsmaßnahmen in Japan \cite{TODO:LorenzBA}, ein Modell zur Simulation von Bärenbewegungen auf Basis realer GPS-Trajektorien in den Karpaten \cite{TODO:BreuBA}, sowie ein System zur automatisierten Extraktion von Wildtierbildern aus E-Mail-Postfächern \cite{TODO:LelchatBA}. Diese Teilsysteme entstanden im Rahmen separater studentischer Arbeiten, wurden isoliert voneinander implementiert und nutzten für die Kartendarstellung die JavaScript-Bibliothek Leaflet.js in Verbindung mit deren Python-Wrapper Folium.
+
+Mit wachsendem Datenumfang zeigten sich jedoch Grenzen dieses Ansatzes: Folium/Leaflet rendert Geodaten primär über das Document Object Model (DOM) bzw. SVG, was bei einer größeren Anzahl gleichzeitig dargestellter Punkte, Pfade und Flächen zu spürbaren Performanceeinbußen im Browser führt. Zudem existierte für jedes Teilsystem eine eigene Kartenansicht, eigene Filterlogik und teilweise eine eigene Datenhaltung, wodurch eine gemeinsame, systemübergreifende Betrachtung der Daten nicht möglich war. Für ein Forschungsteam, das die Bewegungsmuster realer Tiere mit simulierten Alternativpfaden und den Standorten von Abschreckungsmaßnahmen in Bezug setzen möchte, stellt diese Fragmentierung eine erhebliche Einschränkung dar.
+
+\section{Zielsetzung der Arbeit}
+
+Ziel dieser Arbeit ist die Konzeption und Implementierung einer einheitlichen, performanten Kartenplattform, die die genannten Teilsysteme in einer gemeinsamen, mehrschichtigen (Multi-Layer) Visualisierung zusammenführt. Dabei sollen mehrere Teilziele erreicht werden:
+
+\begin{itemize}
+    \item \textbf{Technologiewechsel der Kartenvisualisierung:} Ablösung der bisherigen Folium/Leaflet-basierten Kartendarstellung durch MapLibre GL JS, eine WebGL-basierte, vektorbasierte Open-Source-Kartenbibliothek, um die Darstellungsperformance bei großen Datenmengen signifikant zu verbessern.
+    \item \textbf{Systemintegration:} Zusammenführung der drei bestehenden Teilsysteme — Bärenabschreckung Japan, Bärenbewegungssimulation Karpaten und Bildextraktionssystem — in einer gemeinsamen Anwendung mit einer einzigen, gemeinsam genutzten Kartenkomponente, auf der einzelne Datenebenen unabhängig voneinander ein- und ausgeblendet werden können.
+    \item \textbf{Vereinheitlichung der Datenhaltung:} Migration und Konsolidierung der zuvor teils lokal (SQLite, CSV-Dateien) gehaltenen Daten in eine zentrale, kollaborativ nutzbare MariaDB-Datenbank, um konsistenten Mehrbenutzerzugriff und performante serverseitige Filterung zu ermöglichen.
+    \item \textbf{Interaktions- und Filterkonzept:} Entwicklung eines nutzerfreundlichen Filter- und Layer-Konzepts, das es Forschenden erlaubt, einzelne Bären, Zeiträume, Saisons und Darstellungsarten auszuwählen, ohne dass dabei die gesamte Anwendung neu geladen werden muss.
+\end{itemize}
+
+Nicht Ziel dieser Arbeit ist die Weiterentwicklung der zugrunde liegenden fachlichen Modelle (z.\,B. des Bewegungssimulationsmodells) selbst; diese werden als gegeben angenommen und lediglich in die neue Plattform integriert.
+
+\section{Aufbau der Arbeit}
+
+Die vorliegende Arbeit gliedert sich wie folgt: Kapitel 2 legt die technischen und konzeptionellen Grundlagen dar, die für das Verständnis der Arbeit notwendig sind. Dazu zählen die Grundlagen der Geodatenverarbeitung und Web-Kartenvisualisierung sowie ein Vergleich gängiger Web-Kartenbibliotheken mit besonderem Fokus auf MapLibre GL JS.
+
+Kapitel 3 analysiert die bestehenden Systeme, ihre Architektur, ihre Datenstrukturen sowie die Simulationsdaten, die in die neue Plattform integriert werden sollen, und leitet daraus die Anforderungen an das zu entwickelnde System ab.
+
+Kapitel 4 beschreibt die eigentliche Implementierung: die Umsetzung der Kartenvisualisierung mit MapLibre GL JS, die Integration der einzelnen Teilsysteme, die Vereinheitlichung der Datenbank sowie die entwickelten Interaktions- und Visualisierungskonzepte.
+
+Kapitel 5 diskutiert und bewertet das entwickelte System kritisch und ordnet dessen Grenzen ein. Kapitel 6 fasst die Ergebnisse der Arbeit zusammen und gibt einen Ausblick auf mögliche zukünftige Erweiterungen des Systems.
+
+
+\chapter{Grundlagen}
+
+\section{Geodaten und Web-Kartenvisualisierung}
+
+Geodaten sind Daten, die einen direkten Raumbezug besitzen, also einer bestimmten Position auf der Erdoberfläche zugeordnet werden können \cite{TODO:GISGrundlagen}. Man unterscheidet grundsätzlich zwischen Vektordaten und Rasterdaten. Vektordaten beschreiben geometrische Objekte in Form von Punkten, Linien und Polygonen, die jeweils durch Koordinatenlisten definiert sind — beispielsweise ein einzelner GPS-Messpunkt eines besenderten Bären (Punkt), dessen zurückgelegter Bewegungspfad (Linie) oder ein abgegrenztes Untersuchungsgebiet (Polygon). Rasterdaten hingegen bestehen aus einem regelmäßigen Gitter von Zellen mit zugeordneten Werten, wie es etwa bei Luftbildern, Höhenmodellen oder klassischen Kartenkacheln (Tiles) der Fall ist.
+
+Um Geodaten eindeutig zu positionieren, werden Koordinatenreferenzsysteme (Coordinate Reference Systems, CRS) verwendet. Für die Web-Kartendarstellung hat sich das World Geodetic System 1984 (WGS84, EPSG:4326) als De-facto-Standard etabliert, das Positionen als geografische Breite (Latitude) und Länge (Longitude) angibt. Für die Kachelbasierte Darstellung im Web wird davon meist in die sogenannte Web-Mercator-Projektion (EPSG:3857) transformiert, welche die Kugelform der Erde auf eine ebene Fläche abbildet und dabei Winkeltreue zulasten der Flächentreue bevorzugt — ein für die Navigation und Web-Kartendienste akzeptabler Kompromiss \cite{TODO:WebMercator}.
+
+Für den Datenaustausch zwischen Server und Client hat sich im Web-Kontext das Format GeoJSON durchgesetzt, eine auf JSON basierende offene Spezifikation zur Kodierung geographischer Datenstrukturen \cite{TODO:GeoJSONSpec}. Eine GeoJSON-\texttt{FeatureCollection} besteht aus einer Liste von \texttt{Feature}-Objekten, die jeweils eine Geometrie (z.\,B. \texttt{Point}, \texttt{LineString}, \texttt{Polygon}) und beliebige zusätzliche Eigenschaften (\texttt{properties}) in Form von Schlüssel-Wert-Paaren enthalten können. Dieses Format eignet sich besonders gut für die Übertragung dynamisch generierter Kartendaten aus einer Backend-Anwendung an eine im Browser laufende Kartenkomponente, da es sowohl von serverseitigen Programmiersprachen wie Python als auch nativ von JavaScript-Kartenbibliotheken verarbeitet werden kann.
+
+Web-basierte Kartenanwendungen folgen üblicherweise einer Client-Server-Architektur: Der Server hält die Rohdaten (z.\,B. in einer relationalen oder Geodatenbank) vor, bereitet sie auf Anfrage auf und liefert sie in einem für den Client verarbeitbaren Format aus; der Client — im Regelfall ein Webbrowser — übernimmt das eigentliche Rendering der Karte sowie die Interaktion mit dem Nutzer. Historisch wurden Kartenbilder häufig vollständig serverseitig gerendert und als fertige Rasterbilder (Kartenkacheln) an den Client übertragen. Mit der Verbreitung leistungsfähiger Grafik-APIs im Browser, insbesondere WebGL, hat sich der Trend zunehmend in Richtung client-seitigem Rendering von Vektordaten verschoben: Anstelle vorgerenderter Bilder werden Vektorkacheln (Vector Tiles) übertragen, deren visuelle Darstellung (Farben, Beschriftung, Symbolik) erst im Browser anhand eines deklarativen Style-Dokuments berechnet wird. Dieser Ansatz reduziert die übertragene Datenmenge, ermöglicht eine flüssige, GPU-beschleunigte Interaktion (Zoomen, Rotieren) und erlaubt es, denselben Datenbestand dynamisch unterschiedlich zu stylen, ohne serverseitig neue Bilder generieren zu müssen \cite{TODO:VectorTiles}.
+
+\section{Web-Kartenbibliotheken (insb. MapLibre GL JS)}
+
+Zur Einbettung interaktiver Karten in Webanwendungen existiert eine Reihe etablierter JavaScript-Bibliotheken, die sich in ihrem Rendering-Ansatz, ihrem Funktionsumfang und ihrer Lizenzierung unterscheiden.
+
+\textbf{Leaflet.js} ist eine seit 2011 verbreitete, leichtgewichtige Open-Source-Bibliothek, die Karten primär über gekachelte Rasterbilder darstellt und einzelne Vektorobjekte (Marker, Linien, Polygone) über SVG- bzw. Canvas-Elemente im DOM rendert \cite{TODO:LeafletDoc}. Aufgrund ihres einfachen API und der geringen Einstiegshürde wird Leaflet häufig in Kombination mit dem Python-Paket Folium eingesetzt, das eine deklarative Python-Schnittstelle zur Erzeugung von Leaflet-Karten bereitstellt und insbesondere im Data-Science- und Prototyping-Umfeld verbreitet ist. Der DOM-basierte Rendering-Ansatz stößt jedoch bei einer großen Anzahl gleichzeitig dargestellter Objekte (mehrere tausend Punkte oder komplexe Liniengeometrien) an Performancegrenzen, da jedes Objekt ein eigenes DOM- bzw. SVG-Element erzeugt, dessen Verwaltung und Neuzeichnung mit wachsender Objektzahl zunehmend rechenintensiv wird.
+
+\textbf{Mapbox GL JS} führte demgegenüber ab 2014 einen WebGL-basierten Rendering-Ansatz ein, bei dem Vektorkacheln direkt auf der Grafikkarte gerendert werden, was eine deutlich höhere Darstellungsleistung bei großen Datenmengen sowie flüssige 3D-Perspektiven und Rotationen ermöglicht \cite{TODO:MapboxGL}. Mit der Änderung der Lizenzbedingungen von Mapbox GL JS im Jahr 2020 hin zu einer proprietären Lizenz entstand als Community-Fork der letzten frei lizenzierten Version das Projekt \textbf{MapLibre GL JS}, das seither unter der offenen BSD-3-Clause-Lizenz weiterentwickelt wird \cite{TODO:MapLibreGH}. MapLibre GL JS übernimmt dabei die WebGL-basierte Rendering-Architektur sowie die deklarative Style-Spezifikation von Mapbox GL JS, bleibt jedoch vollständig quelloffen und ist nicht an einen kommerziellen Kartenanbieter gebunden.
+
+Zentrales Konzept von MapLibre GL JS ist die Trennung von Daten (Sources) und deren visueller Darstellung (Layers). Eine \texttt{Source} referenziert einen Datensatz — etwa eine GeoJSON-\texttt{FeatureCollection} oder einen Vector-Tile-Endpunkt — während ein oder mehrere \texttt{Layer} festlegen, wie die Daten dieser Quelle dargestellt werden (z.\,B. als Kreis mit bestimmter Farbe und Radius, als Linie mit bestimmter Strichstärke, oder als Flächenfüllung). Über sogenannte Paint- und Layout-Properties lassen sich diese Darstellungseigenschaften dynamisch anhand von Feature-Eigenschaften steuern, etwa um GPS-Punkte eines Simulationsmodells farblich nach ihrem Typ (realer Messpunkt vs.\ simulierte Alternative) zu unterscheiden. Die gesamte Kartenkonfiguration — Basiskarte, Datenquellen, Layer und deren Styling — wird dabei über ein deklaratives JSON-Dokument nach der Mapbox-Style-Spezifikation beschrieben, was eine hohe Flexibilität bei gleichzeitig guter Nachvollziehbarkeit der Kartendefinition ermöglicht \cite{TODO:StyleSpec}.
+
+Für die vorliegende Arbeit ist MapLibre GL JS aus mehreren Gründen die geeignete Wahl: Erstens ermöglicht der WebGL-basierte Rendering-Ansatz eine performante Darstellung auch größerer Punkt- und Pfadmengen, wie sie bei der gleichzeitigen Visualisierung realer GPS-Trajektorien, simulierter Alternativpfade und Gerätestandorte anfallen. Zweitens erlaubt die freie, quelloffene Lizenzierung den uneingeschränkten Einsatz im Forschungskontext ohne Abhängigkeit von einem kommerziellen Kartenanbieter oder API-Kosten. Drittens lässt sich MapLibre GL JS, da es sich um eine reine JavaScript-Bibliothek handelt, über eine HTML/JavaScript-Einbettung unmittelbar in eine Python-basierte Webanwendung wie Streamlit integrieren, ohne auf ein spezialisiertes, aber möglicherweise weniger flexibles Python-Wrapper-Paket angewiesen zu sein.
+% Claude Ende
+\chapter{Analyse der bestehenden Systeme}
+\section{Systemübersicht und Komponenten}
+\section{Simulationsdaten}
+\subsection{Aufbau des Systems}
+\subsection{Datenstruktur und Ausgabeformat}
+
+\chapter{Implementierung}
+\section{Umsetzung der Kartenvisualisierung mit MapLibre GL JS}
+\section{Integration der Teilsysteme}
+\subsection{Integration Bildextraktionssystem (Anthony Lelchat)}
+\subsection{Integration Bewegungssimulation (Fabian Breu)}
+\subsection{Datenbankvereinheitlichung}
+\section{Neue Datenlayer und Features in der Karte}
+\section{Interaktions- und Visualisierungskonzepte}
+
+\chapter{Diskussion}
+\section{Bewertung des entwickelten Systems}
+\section{Limitationen}
+
+\chapter{Fazit und Ausblick}
+\section{Zusammenfassung der Ergebnisse}
+\section{Ausblick auf zukünftige Erweiterungen}
+
+%\begin{thebibliography}{99}
+% Literatureinträge kommen hier rein
+%\end{thebibliography}
+
+\end{document}

@@ -9,8 +9,13 @@ import streamlit as st
 class NewImagesChecker:
     def __init__(self):
         self.db = WildlifeDatabase()
-    
-    def get_new_images_since(self, minutes_ago=60):
+
+    # ttl=30: laeuft hoechstens alle 30s echt gegen die DB, egal wie oft
+    # Streamlit dazwischen rerunt (z.B. bei jeder Filter-Aenderung in einem
+    # anderen Formular). "_self" -> Streamlit hasht die Instanz nicht, cached
+    # nur ueber (minutes_ago).
+    @st.cache_data(ttl=30, show_spinner=False)
+    def get_new_images_since(_self, minutes_ago=60):
         """
         Holt neue Bilder aus den letzten X Minuten
         
@@ -35,7 +40,7 @@ class NewImagesChecker:
             ORDER BY created_at DESC
         """
         
-        results = self.db.execute_query(query, (cutoff_time,))
+        results = _self.db.execute_query(query, (cutoff_time,))
         return results if results else []
     
     def get_latest_image_time(self):
@@ -67,7 +72,8 @@ class NewImagesChecker:
         results = self.db.execute_query(query, (cutoff_time,))
         return {row['source']: row['count'] for row in results} if results else {}
     
-    def get_last_check_time(self):
+    @st.cache_data(ttl=30, show_spinner=False)
+    def get_last_check_time(_self):
         """
         Holt die letzte Pruefzeit aus der DB
         
@@ -80,7 +86,7 @@ class NewImagesChecker:
             WHERE status_key = 'last_image_check'
         """
         
-        result = self.db.execute_scalar(query)
+        result = _self.db.execute_scalar(query)
         
         if result:
             try:
@@ -105,3 +111,8 @@ class NewImagesChecker:
         """
         
         self.db.execute_update(query, (current_time, current_time))
+
+        # Cache leeren: ohne das wuerde "Jetzt pruefen" bis zu 30s lang
+        # noch den alten (gecachten) Stand anzeigen statt sofort den neuen.
+        NewImagesChecker.get_last_check_time.clear()
+        NewImagesChecker.get_new_images_since.clear()

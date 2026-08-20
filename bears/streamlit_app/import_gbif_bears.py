@@ -89,6 +89,16 @@ def _records_to_geojson(records: list[dict], country: str) -> dict:
             continue
 
         gbif_id = rec.get("gbifID") or rec.get("key")
+
+        # GBIF liefert Bild-URLs direkt im 'media'-Feld mit (keine
+        # zusaetzliche Anfrage noetig). Erstes Foto (type=StillImage) nehmen,
+        # falls vorhanden - fuer eine Bild-Vorschau direkt im Kartenpopup.
+        image_url = ""
+        for m in rec.get("media", []):
+            if m.get("type") == "StillImage" and m.get("identifier"):
+                image_url = m["identifier"]
+                break
+
         features.append({
             "type": "Feature",
             "properties": {
@@ -103,6 +113,7 @@ def _records_to_geojson(records: list[dict], country: str) -> dict:
                 "institution": rec.get("institutionCode", ""),
                 "gbif_id": gbif_id,
                 "gbif_url": f"https://www.gbif.org/occurrence/{gbif_id}" if gbif_id else "",
+                "image_url": image_url,
             },
             "geometry": {
                 "type": "Point",

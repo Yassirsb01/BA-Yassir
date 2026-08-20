@@ -431,10 +431,11 @@ def render_maplibre(
 
       map.on('click','gbif-bears-points',(e)=>{{ const p=e.features[0].properties||{{}};
         const link = p.gbif_url ? '<br><a href=\\"'+p.gbif_url+'\\" target=\\"_blank\\" rel=\\"noopener\\">Datensatz auf GBIF ansehen</a>' : '';
+        const img = p.image_url ? '<br><img src=\\"'+p.image_url+'\\" style=\\"max-width:220px;max-height:160px;border-radius:6px;margin-top:6px;display:block\\" loading=\\"lazy\\" onerror=\\"this.style.display=\\'none\\'\\" />' : '';
         pop(e,'<h3>'+(p.scientific_name||'Ursus arctos')+'</h3>'+
               '<b>Land:</b> '+(p.country||'')+
               '<br><b>Datum:</b> '+(p.event_date||'')+
-              '<br><b>Quelle:</b> '+(p.institution||'')+link); }});
+              '<br><b>Quelle:</b> '+(p.institution||'')+link+img); }});
       map.on('mouseenter','gbif-bears-points',()=>map.getCanvas().style.cursor='pointer');
       map.on('mouseleave','gbif-bears-points',()=>map.getCanvas().style.cursor='');
     }}

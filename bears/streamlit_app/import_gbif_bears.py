@@ -56,6 +56,8 @@ def fetch_gbif_bear_occurrences(country: str, limit: int = 300, timeout: int = 3
             "country": country,
             "hasCoordinate": "true",
             "hasGeospatialIssue": "false",  # keine als fehlerhaft markierten Koordinaten
+            "occurrenceStatus": "PRESENT",  # nicht "ABSENT" (= gezielt gesucht, nicht gefunden -
+                                             # sonst landen "kein Baer hier"-Eintraege auf der Karte)
             "limit": min(page_size, limit - len(all_records)),
             "offset": offset,
         }
@@ -82,10 +84,26 @@ def _records_to_geojson(records: list[dict], country: str) -> dict:
     features = []
     color = COUNTRIES.get(country, "#5b3a29")
 
+    # Datensatztypen, die keine "wilde Baer wurde hier gesehen"-Aussage sind:
+    # FOSSIL_SPECIMEN = fossile Knochenfunde (z.B. Museumsbestaende, teils
+    #   Jahrhunderte/Jahrtausende alt), LIVING_SPECIMEN = Tiere in
+    #   Gefangenschaft (Zoo/Gehege). Beides wuerde die Karte verfaelschen,
+    #   wenn es wie eine aktuelle Wildsichtung dargestellt wird.
+    _EXCLUDED_BASIS_OF_RECORD = {"FOSSIL_SPECIMEN", "LIVING_SPECIMEN"}
+
     for rec in records:
         lat = rec.get("decimalLatitude")
         lng = rec.get("decimalLongitude")
         if lat is None or lng is None:
+            continue
+
+        if rec.get("basisOfRecord") in _EXCLUDED_BASIS_OF_RECORD:
+            continue
+
+        # Defensiv zusaetzlich zum API-Parameter oben pruefen (falls diese
+        # Funktion mal mit ungefilterten Rohdaten aufgerufen wird, oder GBIF
+        # den Parameter in einem Sonderfall nicht greifen laesst).
+        if rec.get("occurrenceStatus") == "ABSENT":
             continue
 
         gbif_id = rec.get("gbifID") or rec.get("key")
@@ -98,6 +116,17 @@ def _records_to_geojson(records: list[dict], country: str) -> dict:
             if m.get("type") == "StillImage" and m.get("identifier"):
                 image_url = m["identifier"]
                 break
+
+        # Fallback: manche Anbieter (z.B. ueber naturgucker/enjoynature.net
+        # eingespeiste Datensaetze) nutzen statt der vollen Multimedia-
+        # Extension nur das einfachere Darwin-Core-Feld 'associatedMedia'
+        # (eine oder mehrere URLs, getrennt durch ' | ').
+        if not image_url:
+            associated = rec.get("associatedMedia", "")
+            if associated:
+                first_url = associated.split("|")[0].strip()
+                if first_url.lower().startswith(("http://", "https://")):
+                    image_url = first_url
 
         features.append({
             "type": "Feature",
@@ -152,7 +181,9 @@ if __name__ == "__main__":
             print("  " + json.dumps(sample, indent=2, ensure_ascii=False))
 
     combined = get_gbif_bears_geojson()
-    print(f"\nGesamt (DE+RO): {len(combined['features'])} Punkte")
+    n_total = len(combined["features"])
+    n_with_image = sum(1 for f in combined["features"] if f["properties"].get("image_url"))
+    print(f"\nGesamt (DE+RO): {n_total} Punkte, davon {n_with_image} mit Foto ({n_with_image/n_total*100:.0f}%)")
 
     with open("gbif_bears_test.geojson", "w", encoding="utf-8") as f:
         json.dump(combined, f, ensure_ascii=False)

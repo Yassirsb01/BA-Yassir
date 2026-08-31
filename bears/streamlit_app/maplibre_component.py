@@ -186,6 +186,18 @@ def render_maplibre(
     .bm-label {{ font-size:12px; color:#555; display:block; margin-bottom:4px; }}
     #basemap-select {{ width:100%; padding:5px 6px; border-radius:6px;
                        border:1px solid #ccc; font-size:13px; background:#fff; cursor:pointer; }}
+
+    .anim-panel {{ top:90px; right:10px; left:auto; min-width:220px; }}
+    .anim-row {{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin:5px 0; }}
+    .anim-label {{ font-size:12px; color:#555; }}
+    .anim-row input, .anim-row select {{ font-size:12px; padding:2px 4px; }}
+    .anim-buttons {{ display:flex; gap:4px; margin:8px 0 4px; }}
+    .anim-buttons button {{ flex:1; padding:5px 4px; border-radius:6px; border:1px solid #ccc;
+                             background:#f7f7f7; cursor:pointer; font-size:13px; }}
+    .anim-buttons button:hover {{ background:#eee; }}
+    #anim-scrubber {{ width:100%; margin-top:4px; }}
+    .anim-time {{ font-size:12px; text-align:center; margin-top:4px; color:#333; font-weight:600; }}
+    .anim-hint {{ font-size:11px; color:#999; margin-top:4px; text-align:center; }}
   </style>
 </head>
 <body>
@@ -196,6 +208,49 @@ def render_maplibre(
     <div class="sep"></div>
     <label class="bm-label">Kartenstil</label>
     <select id="basemap-select">{bm_options}</select>
+  </div>
+
+  <div class="panel anim-panel" id="anim-panel">
+    <div class="title">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:700">
+        <input type="checkbox" id="anim-toggle" /> Animation
+      </label>
+    </div>
+    <div id="anim-controls" style="display:none">
+      <div class="anim-row">
+        <label class="anim-label">Start</label>
+        <input type="datetime-local" id="anim-start" />
+      </div>
+      <div class="anim-row">
+        <label class="anim-label">Dauer</label>
+        <select id="anim-duration">
+          <option value="1">1 Stunde</option>
+          <option value="4" selected>4 Stunden</option>
+          <option value="12">12 Stunden</option>
+          <option value="24">24 Stunden</option>
+          <option value="-1">Gesamter Datensatz</option>
+        </select>
+      </div>
+      <div class="anim-row">
+        <label class="anim-label">Tempo</label>
+        <select id="anim-speed">
+          <option value="1">1x</option>
+          <option value="10">10x</option>
+          <option value="60" selected>60x</option>
+          <option value="300">300x</option>
+          <option value="1000">1000x</option>
+        </select>
+      </div>
+      <div class="anim-buttons">
+        <button id="anim-step-back" title="Ein Schritt zurueck">⏮</button>
+        <button id="anim-play-btn">▶ Play</button>
+        <button id="anim-step-fwd" title="Ein Schritt vor">⏭</button>
+        <button id="anim-reset-btn" title="Zuruecksetzen">⟲</button>
+      </div>
+      <input type="range" id="anim-scrubber" min="0" max="100" value="0" step="0.1" />
+      <div class="anim-time" id="anim-time-label">–</div>
+      <div class="anim-hint" id="anim-hint"></div>
+    </div>
   </div>
 
   <script>
@@ -372,6 +427,19 @@ def render_maplibre(
       addLayerSafe({{ id:'gbif-bears-points', type:'circle', source:'gbif_bears',
         paint:{{ 'circle-radius':5,'circle-opacity':0.85,'circle-stroke-width':1,'circle-stroke-color':'#fff',
                  'circle-color':['coalesce',['get','color'],'#5b3a29'] }} }});
+
+      // ANIMATION (leer beim Start, wird von der Animations-Engine per
+      // setData() bei jedem Frame befuellt - siehe Abschnitt weiter unten)
+      addSrc('anim-trail', {{ type:'FeatureCollection', features:[] }});
+      addSrc('anim-marker', {{ type:'FeatureCollection', features:[] }});
+      addLayerSafe({{ id:'anim-trail', type:'line', source:'anim-trail',
+        paint:{{ 'line-color':['coalesce',['get','color'],'#1d6fb8'],'line-width':3,'line-opacity':0.85 }} }});
+      addLayerSafe({{ id:'anim-marker-halo', type:'circle', source:'anim-marker',
+        paint:{{ 'circle-radius':11,'circle-color':['coalesce',['get','color'],'#1d6fb8'],
+                 'circle-opacity':0.25 }} }});
+      addLayerSafe({{ id:'anim-marker', type:'circle', source:'anim-marker',
+        paint:{{ 'circle-radius':6,'circle-color':['coalesce',['get','color'],'#1d6fb8'],
+                 'circle-stroke-width':2,'circle-stroke-color':'#fff' }} }});
     }}
 
     // Sichtbarkeit aus den Checkboxen (DOM bleibt erhalten) wiederherstellen
@@ -438,6 +506,279 @@ def render_maplibre(
               '<br><b>Quelle:</b> '+(p.institution||'')+link+img); }});
       map.on('mouseenter','gbif-bears-points',()=>map.getCanvas().style.cursor='pointer');
       map.on('mouseleave','gbif-bears-points',()=>map.getCanvas().style.cursor='');
+    }}
+
+    // -------------------------------------------------------
+    // ANIMATION: echte Carpathian-GPS-Route(n) + Simulation (falls
+    // Zeitstempel vorhanden) ueber einen waehlbaren Zeitraum abspielen.
+    // Komplett clientseitig (kein Streamlit-Rerun), analog zur restlichen
+    // Karte per requestAnimationFrame + setData() pro Frame aktualisiert.
+    // -------------------------------------------------------
+    const animState = {{
+      playing: false,
+      speed: 60,          // Datensatz-Minuten pro Wall-Clock-Sekunde
+      tracks: {{}},         // trackId -> [{{t, lng, lat, color}}, ...] zeitlich sortiert
+      trackColors: {{}},
+      startTime: null, endTime: null, currentTime: null,
+      rafId: null, lastWallClock: null,
+    }};
+
+    function parseTime(v) {{
+      if (!v) return NaN;
+      // "YYYY-MM-DD HH:MM:SS" ist in Safari/manchen Browsern nicht zuverlaessig
+      // parsebar -> "T" statt Leerzeichen erzwingen (ISO-Form).
+      const t = Date.parse(String(v).replace(' ', 'T'));
+      return t;
+    }}
+
+    function buildTracksFromCarpathian() {{
+      const byBear = {{}};
+      (DATA.cp_points.features || []).forEach(f => {{
+        const p = f.properties || {{}};
+        const t = parseTime(p.timestamp);
+        if (isNaN(t)) return;
+        const bid = 'cp_' + (p.bear_id != null ? p.bear_id : 'unknown');
+        (byBear[bid] = byBear[bid] || []).push({{
+          t, lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1],
+          color: p.color || '#1d6fb8',
+        }});
+      }});
+      Object.values(byBear).forEach(arr => arr.sort((a,b)=>a.t-b.t));
+      return byBear;
+    }}
+
+    function buildTracksFromSimulation() {{
+      // Simulation-Punkte haben 'type': 'real' oder 'alternative'. Nur
+      // animierbar, wenn ein 'timestamp'-Feld vorhanden ist - falls das
+      // aktuell verwendete bear_simulation-Wrapper-Modul das (noch) nicht
+      // mitliefert, wird dieser Teil einfach leer bleiben (kein Fehler).
+      const groups = {{}};
+      (DATA.sim_points.features || []).forEach(f => {{
+        const p = f.properties || {{}};
+        const t = parseTime(p.timestamp);
+        if (isNaN(t)) return;
+        const key = 'sim_' + (p.type === 'real' ? 'real' : 'alternative');
+        (groups[key] = groups[key] || []).push({{
+          t, lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1],
+          color: p.type === 'real' ? '#1d6fb8' : '#e8830c',
+        }});
+      }});
+      Object.values(groups).forEach(arr => arr.sort((a,b)=>a.t-b.t));
+      return groups;
+    }}
+
+    function interpolatePosition(track, t) {{
+      if (!track || track.length === 0) return null;
+      if (t < track[0].t) return null;                          // noch nicht gestartet
+      if (t >= track[track.length-1].t) return track[track.length-1]; // Ende erreicht
+
+      let lo = 0, hi = track.length - 1;
+      while (hi - lo > 1) {{
+        const mid = (lo + hi) >> 1;
+        if (track[mid].t <= t) lo = mid; else hi = mid;
+      }}
+      const a = track[lo], b = track[hi];
+      const frac = b.t === a.t ? 0 : (t - a.t) / (b.t - a.t);
+      return {{ lng: a.lng + (b.lng - a.lng) * frac, lat: a.lat + (b.lat - a.lat) * frac, color: a.color }};
+    }}
+
+    function trailCoords(track, t) {{
+      const coords = [];
+      for (const p of track) {{
+        if (p.t >= t) break;  // >= statt > : Punkt bei exakter Zeitgleichheit
+                               // kommt gleich unten ueber interpolatePosition() rein,
+                               // sonst waere er doppelt im Trail (einmal hier, einmal unten).
+        coords.push([p.lng, p.lat]);
+      }}
+      const cur = interpolatePosition(track, t);
+      if (cur) coords.push([cur.lng, cur.lat]);
+      return coords;
+    }}
+
+    function renderAnimationFrame() {{
+      const markerFeatures = [], trailFeatures = [];
+      Object.entries(animState.tracks).forEach(([key, track]) => {{
+        const pos = interpolatePosition(track, animState.currentTime);
+        const color = animState.trackColors[key];
+        if (pos) {{
+          markerFeatures.push({{ type:'Feature', properties:{{color}}, geometry:{{type:'Point', coordinates:[pos.lng, pos.lat]}} }});
+        }}
+        const coords = trailCoords(track, animState.currentTime);
+        if (coords.length >= 2) {{
+          trailFeatures.push({{ type:'Feature', properties:{{color}}, geometry:{{type:'LineString', coordinates: coords}} }});
+        }}
+      }});
+
+      const ms = map.getSource('anim-marker'); if (ms) ms.setData({{type:'FeatureCollection', features: markerFeatures}});
+      const ts = map.getSource('anim-trail');  if (ts) ts.setData({{type:'FeatureCollection', features: trailFeatures}});
+
+      const timeLabel = document.getElementById('anim-time-label');
+      if (timeLabel) {{
+        timeLabel.textContent = new Date(animState.currentTime).toLocaleString('de-DE', {{
+          year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit',
+        }});
+      }}
+      const scrubber = document.getElementById('anim-scrubber');
+      if (scrubber && animState.startTime != null && animState.endTime > animState.startTime) {{
+        const pct = (animState.currentTime - animState.startTime) / (animState.endTime - animState.startTime) * 100;
+        scrubber.value = Math.max(0, Math.min(100, pct));
+      }}
+    }}
+
+    function animLoop(nowWall) {{
+      if (!animState.playing) return;
+      if (animState.lastWallClock == null) animState.lastWallClock = nowWall;
+      const dtSec = (nowWall - animState.lastWallClock) / 1000;
+      animState.lastWallClock = nowWall;
+
+      animState.currentTime += dtSec * animState.speed * 60 * 1000; // Minuten -> ms
+
+      if (animState.currentTime >= animState.endTime) {{
+        animState.currentTime = animState.endTime;
+        renderAnimationFrame();
+        pauseAnimation();
+        return;
+      }}
+      renderAnimationFrame();
+      animState.rafId = requestAnimationFrame(animLoop);
+    }}
+
+    function playAnimation() {{
+      if (animState.playing || animState.startTime == null) return;
+      if (animState.currentTime >= animState.endTime) animState.currentTime = animState.startTime; // von vorn, falls am Ende
+      animState.playing = true;
+      animState.lastWallClock = null;
+      const btn = document.getElementById('anim-play-btn'); if (btn) btn.textContent = '⏸ Pause';
+      animState.rafId = requestAnimationFrame(animLoop);
+    }}
+
+    function pauseAnimation() {{
+      animState.playing = false;
+      if (animState.rafId) cancelAnimationFrame(animState.rafId);
+      const btn = document.getElementById('anim-play-btn'); if (btn) btn.textContent = '▶ Play';
+    }}
+
+    function allTimesSorted() {{
+      const all = [];
+      Object.values(animState.tracks).forEach(track => track.forEach(p => all.push(p.t)));
+      return [...new Set(all)].sort((a,b)=>a-b);
+    }}
+
+    function stepAnimation(dir) {{
+      if (animState.startTime == null) return;
+      const times = allTimesSorted();
+      if (!times.length) return;
+      let next;
+      if (dir > 0) {{
+        next = times.find(t => t > animState.currentTime);
+        if (next == null) next = animState.endTime;
+      }} else {{
+        const past = times.filter(t => t < animState.currentTime);
+        next = past.length ? past[past.length-1] : animState.startTime;
+      }}
+      animState.currentTime = Math.max(animState.startTime, Math.min(animState.endTime, next));
+      renderAnimationFrame();
+    }}
+
+    function initAnimation() {{
+      const cpTracks  = buildTracksFromCarpathian();
+      const simTracks = buildTracksFromSimulation();
+
+      animState.tracks = {{}}; animState.trackColors = {{}};
+      Object.entries(cpTracks).forEach(([k, arr]) => {{
+        animState.tracks[k] = arr; animState.trackColors[k] = (arr[0] && arr[0].color) || '#1d6fb8';
+      }});
+      Object.entries(simTracks).forEach(([k, arr]) => {{
+        animState.tracks[k] = arr; animState.trackColors[k] = (arr[0] && arr[0].color) || '#e8830c';
+      }});
+
+      let minT = Infinity, maxT = -Infinity;
+      Object.values(animState.tracks).forEach(arr => {{
+        if (arr.length) {{ minT = Math.min(minT, arr[0].t); maxT = Math.max(maxT, arr[arr.length-1].t); }}
+      }});
+
+      const hint = document.getElementById('anim-hint');
+      if (!isFinite(minT)) {{
+        if (hint) hint.textContent = 'Keine zeitgestempelten Daten gefunden (Carpathian-Filter anwenden).';
+        return false;
+      }}
+
+      const startInput = document.getElementById('anim-start');
+      let start = startInput.value ? parseTime(startInput.value) : minT;
+      if (isNaN(start) || start < minT || start > maxT) start = minT;
+
+      const durHours = parseFloat(document.getElementById('anim-duration').value);
+      const end = durHours < 0 ? maxT : Math.min(maxT, start + durHours * 3600 * 1000);
+
+      animState.startTime = start;
+      animState.endTime = end;
+      animState.currentTime = start;
+
+      // Start-Feld mit dem frueh(est)en verfuegbaren Zeitpunkt vorbelegen,
+      // falls der Nutzer noch nichts eingetragen hat.
+      if (!startInput.value) {{
+        const d = new Date(minT);
+        const pad = n => String(n).padStart(2,'0');
+        startInput.value = `${{d.getFullYear()}}-${{pad(d.getMonth()+1)}}-${{pad(d.getDate())}}T${{pad(d.getHours())}}:${{pad(d.getMinutes())}}`;
+      }}
+      if (hint) hint.textContent = Object.keys(animState.tracks).length + ' Route(n) geladen.';
+      renderAnimationFrame();
+      return true;
+    }}
+
+    function setAnimationMode(on) {{
+      const controls = document.getElementById('anim-controls');
+      if (controls) controls.style.display = on ? 'block' : 'none';
+
+      // Statische Punkte/Linien ausblenden, waehrend die Animation laeuft
+      // (sonst sieht man Original + animierten Punkt gleichzeitig).
+      setVis(['cp-points','cp-paths'], !on && document.getElementById(GROUPS.carpathian.id).checked);
+      setVis(['sim-points','sim-paths'], !on && document.getElementById(GROUPS.simulation.id).checked);
+      setVis(['anim-marker','anim-marker-halo','anim-trail'], on);
+
+      if (on) {{
+        pauseAnimation();
+        initAnimation();
+      }} else {{
+        pauseAnimation();
+      }}
+    }}
+
+    function wireAnimationControls() {{
+      const toggle = document.getElementById('anim-toggle');
+      if (toggle) toggle.addEventListener('change', e => setAnimationMode(e.target.checked));
+
+      const playBtn = document.getElementById('anim-play-btn');
+      if (playBtn) playBtn.addEventListener('click', () => animState.playing ? pauseAnimation() : playAnimation());
+
+      const stepFwd = document.getElementById('anim-step-fwd');
+      if (stepFwd) stepFwd.addEventListener('click', () => {{ pauseAnimation(); stepAnimation(1); }});
+      const stepBack = document.getElementById('anim-step-back');
+      if (stepBack) stepBack.addEventListener('click', () => {{ pauseAnimation(); stepAnimation(-1); }});
+
+      const resetBtn = document.getElementById('anim-reset-btn');
+      if (resetBtn) resetBtn.addEventListener('click', () => {{
+        pauseAnimation();
+        if (animState.startTime != null) {{ animState.currentTime = animState.startTime; renderAnimationFrame(); }}
+      }});
+
+      const speedSel = document.getElementById('anim-speed');
+      if (speedSel) speedSel.addEventListener('change', e => {{ animState.speed = parseFloat(e.target.value); }});
+
+      const durSel = document.getElementById('anim-duration');
+      if (durSel) durSel.addEventListener('change', () => {{ pauseAnimation(); initAnimation(); }});
+
+      const startInput = document.getElementById('anim-start');
+      if (startInput) startInput.addEventListener('change', () => {{ pauseAnimation(); initAnimation(); }});
+
+      const scrubber = document.getElementById('anim-scrubber');
+      if (scrubber) scrubber.addEventListener('input', e => {{
+        if (animState.startTime == null) return;
+        pauseAnimation();
+        const pct = parseFloat(e.target.value) / 100;
+        animState.currentTime = animState.startTime + pct * (animState.endTime - animState.startTime);
+        renderAnimationFrame();
+      }});
     }}
 
     // -------------------------------------------------------
@@ -536,6 +877,7 @@ def render_maplibre(
       applyVisibilityFromCheckboxes();
       wirePopups();
       wireControls();
+      wireAnimationControls();
 
       // Fuer bereits sichtbare Layer, deren Daten sich geaendert haben
       // (z.B. neuer Baer/Zeitraum via "Anwenden"), zur neuen Position fliegen -

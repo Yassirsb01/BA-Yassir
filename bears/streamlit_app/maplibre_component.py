@@ -12,7 +12,8 @@ import json
 import streamlit.components.v1 as components
 
 
-BASEMAP_NAMES = ["Liberty", "Bright", "Positron", "Dark", "OSM Raster", "Esri Satellite"]
+BASEMAP_NAMES = ["Liberty", "Bright", "Positron", "Dark", "OSM Raster",
+                 "Esri Satellite", "Esri Satellite + Beschriftung"]
 
 
 def _build_styles():
@@ -23,6 +24,12 @@ def _build_styles():
         "Positron": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
         "Dark":     "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
     }
+    # Wichtig bei Raster-Quellen: maxzoom MUSS gesetzt sein, sonst fordert
+    # MapLibre beim Hineinzoomen Kacheln an, die es dort nicht gibt. Esri
+    # antwortet darauf nicht mit einem Fehler, sondern mit einer gueltigen
+    # Kachel mit dem Text "Map data not yet available" - die Karte sieht
+    # dann leer/kaputt aus. Mit maxzoom skaliert MapLibre stattdessen die
+    # letzte vorhandene Kachel hoch (leicht unscharf, aber immer Bild).
     raster = {
         "OSM Raster": {
             "version": 8,
@@ -31,7 +38,8 @@ def _build_styles():
                 "tiles": ["https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
                           "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
                           "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png"],
-                "tileSize": 256, "attribution": "(c) OpenStreetMap contributors"}},
+                "tileSize": 256, "maxzoom": 19,
+                "attribution": "(c) OpenStreetMap contributors"}},
             "layers": [{"id": "osm", "type": "raster", "source": "osm"}],
         },
         "Esri Satellite": {
@@ -39,8 +47,27 @@ def _build_styles():
             "sources": {"esri": {
                 "type": "raster",
                 "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-                "tileSize": 256, "attribution": "Tiles (c) Esri"}},
+                "tileSize": 256, "maxzoom": 17,
+                "attribution": "Luftbild (c) Esri, Maxar, Earthstar Geographics"}},
             "layers": [{"id": "esri", "type": "raster", "source": "esri"}],
+        },
+        "Esri Satellite + Beschriftung": {
+            "version": 8,
+            "sources": {
+                "esri": {
+                    "type": "raster",
+                    "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+                    "tileSize": 256, "maxzoom": 17,
+                    "attribution": "Luftbild (c) Esri, Maxar, Earthstar Geographics"},
+                "esri-ref": {
+                    "type": "raster",
+                    "tiles": ["https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
+                    "tileSize": 256, "maxzoom": 17},
+            },
+            "layers": [
+                {"id": "esri", "type": "raster", "source": "esri"},
+                {"id": "esri-ref", "type": "raster", "source": "esri-ref"},
+            ],
         },
     }
     return {**vector, **raster}

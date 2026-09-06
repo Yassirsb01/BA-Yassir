@@ -33,28 +33,58 @@ import json
 import streamlit as st
 import streamlit.components.v1 as components
 
-# Satellit als vollstaendiges Rasterstil-Objekt (MapLibre akzeptiert sowohl
-# eine Style-URL als auch ein Style-Objekt in setStyle()).
-_ESRI_SATELLITE_STYLE = {
+# Esri World Imagery liefert in abgelegenen Gebieten (Karpaten) nur ~1 m
+# Aufloesung, das entspricht etwa Zoomstufe 17. Wird eine hoehere maxzoom
+# angegeben, fordert MapLibre Kacheln an, die dort nicht existieren - Esri
+# antwortet dann mit der Platzhalter-Kachel "Map data not yet available".
+# Mit korrekt gesetztem maxzoom skaliert MapLibre stattdessen die
+# vorhandenen Kacheln hoch (leicht unschaerfer, aber immer Bild).
+ESRI_NATIVE_MAXZOOM = 17
+
+_ESRI_IMAGERY_SOURCE = {
+    "type": "raster",
+    "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+    "tileSize": 256,
+    "maxzoom": ESRI_NATIVE_MAXZOOM,
+    "attribution": "Luftbild: &copy; Esri, Maxar, Earthstar Geographics",
+}
+
+# Transparente Beschriftungs-/Grenzenebene, um im Satellitenbild die
+# Orientierung zu behalten (Ortsnamen, Verwaltungsgrenzen).
+_ESRI_REFERENCE_SOURCE = {
+    "type": "raster",
+    "tiles": ["https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
+    "tileSize": 256,
+    "maxzoom": ESRI_NATIVE_MAXZOOM,
+    "attribution": "&copy; Esri",
+}
+
+_SATELLITE_STYLE = {
     "version": 8,
-    "sources": {
-        "esri-imagery": {
-            "type": "raster",
-            "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-            "tileSize": 256,
-            "maxzoom": 19,
-            "attribution": "Tiles &copy; Esri",
-        }
-    },
+    "sources": {"esri-imagery": _ESRI_IMAGERY_SOURCE},
     "layers": [{"id": "esri-imagery", "type": "raster", "source": "esri-imagery"}],
 }
 
+_SATELLITE_LABELS_STYLE = {
+    "version": 8,
+    "sources": {"esri-imagery": _ESRI_IMAGERY_SOURCE, "esri-reference": _ESRI_REFERENCE_SOURCE},
+    "layers": [
+        {"id": "esri-imagery", "type": "raster", "source": "esri-imagery"},
+        {"id": "esri-reference", "type": "raster", "source": "esri-reference"},
+    ],
+}
+
 BASEMAP_STYLES = {
-    "Satellit": _ESRI_SATELLITE_STYLE,
+    "Satellit": _SATELLITE_STYLE,
+    "Satellit + Beschriftung": _SATELLITE_LABELS_STYLE,
     "Positron": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
     "Liberty": "https://tiles.openfreemap.org/styles/liberty",
     "Dark Matter": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
 }
+
+# Etwas ueber der nativen Aufloesung erlaubt, damit man noch nah heran kann -
+# aber nicht so weit, dass das Hochskalieren unbrauchbar unscharf wird.
+MAP_MAX_ZOOM = 18.5
 
 # Kostenfreie Hoehendaten ohne API-Schluessel (Quelle des offiziellen
 # MapLibre-3D-Terrain-Beispiels).
@@ -348,7 +378,9 @@ def render_animation_map(
 
     const map = new maplibregl.Map({{
       container:'map', style:STYLES["{basemap}"], center:[25.3,45.6], zoom:8,
-      maxPitch:85, attributionControl:false,
+      maxPitch:85, maxZoom:{MAP_MAX_ZOOM},
+      // Quellenangabe ist bei Esri-Luftbildern Pflicht (kompakt eingeklappt)
+      attributionControl:{{ compact:true }},
     }});
     map.addControl(new maplibregl.NavigationControl({{ visualizePitch:true }}), 'top-right');
     map.addControl(new maplibregl.ScaleControl({{ maxWidth:110, unit:'metric' }}), 'bottom-right');
@@ -370,6 +402,16 @@ def render_animation_map(
       }}
 
       const addLayerSafe = (spec) => {{ if (!map.getLayer(spec.id)) map.addLayer(spec); }};
+
+      // Schummerung (nutzt dasselbe Hoehenmodell wie der 3D-Modus): macht
+      // Hangrichtung und Gelaendeform sichtbar, was im reinen Luftbild oft
+      // schwer zu erkennen ist. Wird zusammen mit 3D ein-/ausgeschaltet und
+      // liegt UNTER allen Datenebenen, damit Route und Faecher lesbar bleiben.
+      if (map.getSource('terrain-dem')) {{
+        addLayerSafe({{ id:'hillshade', type:'hillshade', source:'terrain-dem',
+          layout:{{ visibility:'none' }},
+          paint:{{ 'hillshade-exaggeration':0.45, 'hillshade-shadow-color':'#3b3226' }} }});
+      }}
 
       // Gesamtpfad: standardmaessig AUS (sonst ist das Ergebnis schon vor
       // dem Abspielen sichtbar) - per Schalter einblendbar.
@@ -422,6 +464,9 @@ def render_animation_map(
 
     function applyTerrain(on) {{
       try {{
+        if (map.getLayer('hillshade')) {{
+          map.setLayoutProperty('hillshade','visibility', on ? 'visible' : 'none');
+        }}
         if (on) {{
           if (map.getSource('terrain-dem')) map.setTerrain({{ source:'terrain-dem', exaggeration:1.4 }});
           map.easeTo({{ pitch:62, duration:700 }});

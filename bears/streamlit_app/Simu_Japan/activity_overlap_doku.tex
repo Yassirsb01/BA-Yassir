@@ -1,0 +1,177 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=black, urlcolor=blue, citecolor=black, breaklinks=true}
+\usepackage{amsmath}
+\usepackage{microtype}
+\usepackage{seqsplit}
+\sloppy
+
+\title{Tagesrhythmus-Vergleich: Übertragung des Carpathian-Bewegungsmodells\\
+auf die japanischen Kameradaten}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-2em}
+
+\section{Ausgangslage}
+
+Die beiden Teilsysteme dieser Arbeit liefern strukturell unterschiedliche
+Daten. Die rum\"anischen Carpathian-Daten sind \emph{Trajektorien}: fortlaufende
+GPS-Positionen bekannter, einzelner Tiere. Die japanischen Kameradaten sind
+dagegen \emph{Detektionen}: Zeitpunkt und Ort einer Ausl\"osung, ohne
+Individualkennung und ohne Bewegungspfad zwischen zwei Ausl\"osungen. Eine
+Bewegungsanimation im wörtlichen Sinn -- wie sie f\"ur die Carpathian-Daten
+umgesetzt wurde -- l\"asst sich aus den japanischen Rohdaten allein nicht
+ableiten.
+
+Der Betreuer regte an (Sprechstunde vom 21.08.2026), das in Rum\"anien
+gelernte Bewegungsmuster auf die japanischen Kameradaten zu \"ubertragen und
+zu pr\"ufen, \emph{"`ob die simulierten B\"aren in \"ahnlichen Zeitr\"aumen wie
+echte B\"aren fotografiert werden"'}. Diese Fragestellung wird im Folgenden in
+ein konkretes, statistisch auswertbares Verfahren \"ubersetzt.
+
+\section{Datengrundlage und ihre Einschr\"ankungen}
+
+Eine Sichtung der Datenbank (\texttt{bears\_images\_unified}) ergab 52
+Bildeintr\"age mit Zeitstempel, verteilt auf 20 Ger\"ate -- nach Ausschluss
+zweier Platzhalter-Ger\"ate-IDs (\texttt{199999}, \texttt{999999}), die
+vermutlich aus einer fehlgeschlagenen Ger\"ate-Erkennung beim
+E-Mail-Import stammen. Keine einzelne Kamera erreicht mehr als elf
+Zeitstempel. Eine Auswertung \emph{pro Kamera} ist damit nicht sinnvoll
+durchf\"uhrbar; die Analyse muss \"uber alle Kameras gepoolt erfolgen, was die
+r\"aumliche Aufl\"osung der Aussage reduziert, aber weiterhin einen zeitlichen
+Vergleich erlaubt.
+
+Ein erster Blick auf die gepoolte Verteilung zeigt ein auff\"alliges Muster:
+90\,\% aller Ausl\"osungen liegen zwischen 18 und 6 Uhr. Asiatische
+Kragenb\"aren (\emph{Ursus thibetanus}) gelten in der Literatur eigentlich als
+cathemeral, also grunds\"atzlich sowohl tag- als auch nachtaktiv. Die nahezu
+ausschlie{\ss}liche Nachtaktivit\"at in den vorliegenden Daten ist damit selbst
+ein bemerkenswerter, eigenst\"andig zeigbarer Befund -- konsistent mit der
+in mehreren Studien beschriebenen Verschiebung der Aktivit\"at in die Nacht
+unter erh\"ohtem menschlichem Nutzungsdruck, was angesichts der Lage der
+Ger\"ate an Abschreckungsanlagen (also an Orten mit Mensch-Wildtier-Konflikt)
+plausibel ist.
+
+\section{Methodik}
+
+\subsection{\"Uberlappungskoeffizient}
+
+Zum Vergleich zweier Tagesrhythmus-Verteilungen wird der
+\"Uberlappungskoeffizient $\Delta$ verwendet, das Standardma{\ss} der
+Kamerafallen-Forschung f\"ur diesen Zweck:
+\begin{equation}
+  \Delta = \int_0^{24} \min\bigl(f_1(t),\, f_2(t)\bigr)\, dt
+\end{equation}
+mit $f_1, f_2$ als (auf $\int f = 1$ normierten) Dichtefunktionen der
+Ausl\"osezeiten zweier Gruppen. $\Delta = 0$ bedeutet keinerlei zeitliche
+\"Uberschneidung, $\Delta = 1$ identische Muster. Das Ma{\ss} und die
+zugeh\"orige Sch\"atzmethodik wurden von Ridout und Linkie eingef\"uhrt und
+sind im weit verbreiteten R-Paket \texttt{overlap} implementiert.\footnote{Ridout,
+M.S., Linkie, M.: \emph{Estimating overlap of daily activity patterns from
+camera trap data}. Journal of Agricultural, Biological and Environmental
+Statistics (2009). Sowie: Meredith, M., Ridout, M.: \emph{Overview of the
+overlap package}, CRAN-Vignette.}
+
+In dieser Arbeit wird $\Delta$ nicht \"uber die von-Mises-Kern-Implementierung
+des R-Pakets, sondern \"uber eine selbst implementierte, gespiegelte
+("`wrapped"') Gau{\ss}-Kerndichtesch\"atzung auf dem 24-Stunden-Kreis
+berechnet (Datei \texttt{activity\_overlap.py}, Funktion
+\texttt{circular\_kde}). Die Spiegelung stellt sicher, dass z.\,B. 23:30 Uhr
+und 00:30 Uhr korrekt als benachbart behandelt werden, nicht als
+entgegengesetzte Enden einer Zeitachse. Die Wahl dieser vereinfachten,
+selbst kontrollierten Implementierung wurde getroffen, um keine zus\"atzliche
+R-Abh\"angigkeit in ein sonst rein Python-basiertes System einzuf\"uhren; das
+zugrunde liegende Prinzip ist identisch.
+
+\subsection{Simulierte Vergleichsgruppe: Monte-Carlo-\"Ubertragung}
+
+Als Vergleichsgruppe zu den echten Detektionen dient keine einzelne
+Simulation, sondern eine \emph{Monte-Carlo-Stichprobe} aus 300 unabh\"angigen
+simulierten B\"arenpfaden (je 48\,h), jeweils gestartet an einem
+zuf\"allig gew\"ahlten echten japanischen Kamerastandort. Geschlecht, Alter
+und Saison werden pro Lauf zuf\"allig gezogen, um \"uber die unbekannte
+Demografie der japanischen Population zu mitteln. Die Bewegungslogik selbst
+ist identisch mit der bereits f\"ur den Realit\"atscheck der Simulation
+implementierten Schrittgenerierung (empirische, stundenaufgel\"oste
+Schrittweiten aus den rum\"anischen \texttt{BearSpeeds}-Daten, zuf\"allige
+Richtung). N\"ahert sich ein simulierter Pfadpunkt einer beliebigen echten
+Kamera auf $\leq 150\,$m, wird dies als \emph{virtuelle Ausl\"osung}
+gez\"ahlt und deren Uhrzeit gespeichert.
+
+Dieses Vorgehen -- Bewegung simulieren, virtuelle Kamerafallen auswerten,
+mit echten Kamerafallendaten vergleichen -- ist ein etabliertes Studiendesign
+in der Wildtier\"okologie und wurde u.\,a. zur Validierung von
+Kamerafallen-Dichtesch\"atzmethoden anhand simulierter Tierpopulationen
+eingesetzt.\footnote{Vgl. z.\,B. Calenge, C. et al. sowie Santini, L. et al.
+zu simulationsbasierten Kamerafallen-Studiendesigns; genaue Quellenangaben
+sind \"uber die Recherche-Historie des Bachelorarbeitsprojekts nachvollziehbar
+und vor \"Ubernahme in das Literaturverzeichnis im Volltext zu verifizieren.}
+
+\subsection{Unsicherheitsangabe}
+
+Da die reale Stichprobe klein ist (52 Detektionen, nach Bereinigung), wird
+$\Delta$ nicht als einzelner, unbegr\"undet pr\"azise wirkender Wert
+berichtet, sondern mit einem 95\,\%-Bootstrap-Konfidenzintervall (1000
+Wiederholungen, Ziehen mit Zur\"ucklegen aus beiden Stichproben). Ein
+Beispiel-Ergebnis (mit einer synthetischen, dem realen Muster nachempfundenen
+Stichprobe erzeugt, siehe Abbildung~\ref{fig:overlap}) liefert $\Delta =
+0{,}59$ bei einem Konfidenzintervall von $[0{,}51,\ 0{,}64]$.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.85\textwidth]{activity_overlap_beispiel.png}
+  \caption{Beispielhafter Tagesrhythmus-Vergleich: echte Detektionsdichte
+    (blau) gegen simulierte Detektionsdichte (orange), graue Fl\"ache zeigt
+    die \"Uberlappung. Erzeugt mit einer synthetischen Stichprobe zur
+    Illustration der Methodik -- vor Verwendung in der Arbeit mit dem
+    tats\"achlichen Datenbank-Ergebnis zu ersetzen.}
+  \label{fig:overlap}
+\end{figure}
+
+\section{Beitrag zur Arbeit}
+
+Diese Analyse leistet unabh\"angig vom konkreten $\Delta$-Wert mehrere
+Beitr\"age:
+
+\begin{enumerate}
+  \item Sie beantwortet die im Meeting gestellte Frage (zeitliche
+        \"Ubereinstimmung simulierter und echter B\"arenbewegung) mit einer
+        einzelnen, interpretierbaren Kennzahl statt einer subjektiven
+        Einsch\"atzung.
+  \item Sie macht die Grenzen der Datenlage explizit sichtbar (kleine
+        Stichprobe, keine Kamera-individuelle Auswertung m\"oglich) statt sie
+        zu verschweigen -- und liefert trotzdem ein verwertbares, statistisch
+        abgesichertes Ergebnis.
+  \item Ein niedriger $\Delta$-Wert w\"are \emph{kein} Fehlschlag der
+        Umsetzung, sondern eine valide wissenschaftliche Aussage: dass
+        rum\"anische Braunb\"ar-Bewegungsmuster die Aktivit\"at japanischer
+        Kragenb\"aren zeitlich nicht erkl\"aren -- plausibel angesichts der
+        unterschiedlichen Art und \"Okologie.
+  \item Der Ansatz ist erweiterbar: Ein Vergleichslauf mit publizierten
+        japanischen Bewegungsparametern (statt der rum\"anischen) anstelle der
+        \texttt{BearSpeeds}-Tabelle w\"urde direkt zeigen, wie stark der
+        Artunterschied den $\Delta$-Wert beeinflusst -- ein m\"oglicher
+        n\"achster Ausbauschritt.
+\end{enumerate}
+
+\section{Grenzen}
+
+Die Aussagekraft ist durch die geringe Stichprobengr\"o{\ss}e (52 Detektionen)
+eingeschr\"ankt; das Ergebnis ist explorativ zu lesen, nicht als
+konfirmatorischer Test. Die gepoolte Auswertung verdeckt m\"ogliche
+Unterschiede zwischen einzelnen Kamerastandorten (z.\,B. unterschiedliche
+Habitatn\"ahe). Die Simulation nutzt weiterhin ein an rum\"anischen
+Braunb\"aren kalibriertes Bewegungsmodell fu\"r eine andere Art
+(\emph{Ursus thibetanus} statt \emph{Ursus arctos}) -- eine bewusste, im
+Kontext der Aufgabenstellung nachvollziehbare Vereinfachung, die als
+Limitation zu benennen ist.
+
+\end{document}

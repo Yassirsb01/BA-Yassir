@@ -21,6 +21,7 @@ from datetime import datetime
 
 from status_widget import display_new_images_status
 import maplibre_component as ml
+from geojson_table_helper import geojson_to_dataframe
 
 st.set_page_config(page_title="Wildlife Movement Analysis System", layout="wide")
 
@@ -106,6 +107,57 @@ try:
     @st.cache_resource
     def _get_japan_system():
         return JapanDeterrentSystem()
+
+    # ------------------------------------------------------------
+    # Neue Marker/Gebiete verarbeiten, die per Karten-Zeichenfunktion
+    # (maplibre_component.py, saveDrawing()) als URL-Parameter ankommen.
+    # Laeuft VOR dem Laden der Kartendaten, damit der neue Eintrag sofort
+    # sichtbar ist, sobald die Seite (nach dem Speichern-Klick per echter
+    # Navigation neu geladen) hier ankommt. Cache wird explizit geleert,
+    # sonst wuerde die alte, gecachte JapanDeterrentSystem-Instanz weiter
+    # die Daten von VOR dem Speichern zeigen.
+    # ------------------------------------------------------------
+    qp = st.query_params
+
+    if "new_marker_lat" in qp and "new_marker_lng" in qp:
+        try:
+            lat = float(qp["new_marker_lat"])
+            lng = float(qp["new_marker_lng"])
+            from wildlife_db_mariadb import WildlifeDatabase
+            db = WildlifeDatabase()
+            new_id = db.get_next_marker_id()
+            if db.save_marker(new_id, lat, lng):
+                st.toast(f"Marker {new_id} gespeichert.", icon="✅")
+                _get_japan_system.clear()
+            else:
+                st.error("Marker konnte nicht gespeichert werden (Datenbankverbindung/VPN prüfen).")
+        except Exception as e:
+            st.error(f"Fehler beim Speichern des Markers: {e}")
+        finally:
+            del st.query_params["new_marker_lat"]
+            del st.query_params["new_marker_lng"]
+            st.rerun()
+
+    if "new_polygon_coords" in qp and "new_polygon_name" in qp:
+        try:
+            import json as _json
+            coords = _json.loads(qp["new_polygon_coords"])
+            name = qp["new_polygon_name"]
+            from wildlife_db_mariadb import WildlifeDatabase
+            db = WildlifeDatabase()
+            new_id = db.get_next_polygon_id()
+            polygon_id = f"poly-{new_id}"
+            if db.save_polygon(polygon_id, name, coords):
+                st.toast(f"Gebiet „{name}“ gespeichert.", icon="✅")
+                _get_japan_system.clear()
+            else:
+                st.error("Gebiet konnte nicht gespeichert werden (Datenbankverbindung/VPN prüfen).")
+        except Exception as e:
+            st.error(f"Fehler beim Speichern des Gebiets: {e}")
+        finally:
+            del st.query_params["new_polygon_coords"]
+            del st.query_params["new_polygon_name"]
+            st.rerun()
 
     jp = _get_japan_system()
     japan_data = {
@@ -336,6 +388,90 @@ st.caption(
     "automatisch auf die jeweiligen Daten. Welche Bären/Filter geladen werden, "
     "stellst du links in der Sidebar ein."
 )
+
+# ============================================================
+# Datentabellen unter der Karte - dieselben Daten, die auch auf der Karte
+# dargestellt werden (direkt aus denselben Variablen, keine zweite Abfrage),
+# damit sich das Kartenbild anhand der Rohdaten nachvollziehen laesst.
+# ============================================================
+st.markdown("### Daten zur aktuellen Kartenansicht")
+
+_table_tabs = st.tabs([
+    "Japan-Geräte", "Japan Marker/Gebiete", "Carpathian GPS",
+    "Simulation", "Wolf/Luchs", "GBIF Bär-Sichtungen",
+])
+
+with _table_tabs[0]:
+    df = geojson_to_dataframe((japan_data or {}).get("deterrents"))
+    st.caption(f"{len(df)} Abschreckungsgeräte" if not df.empty else "Keine Daten geladen.")
+    if not df.empty:
+        st.dataframe(df, width="stretch")
+
+with _table_tabs[1]:
+    df_m = geojson_to_dataframe((japan_data or {}).get("markers"))
+    df_p = geojson_to_dataframe((japan_data or {}).get("polygons"))
+    st.caption(f"{len(df_m)} Marker, {len(df_p)} Gebiete/Polygone")
+
+    if not df_m.empty:
+        st.markdown("**Marker**")
+        st.dataframe(df_m, width="stretch")
+        with st.expander("Marker löschen"):
+            del_marker_id = st.selectbox("Zu löschender Marker", df_m["id"], key="del_marker_sel")
+            confirm_marker = st.checkbox("Ja, wirklich löschen", key="confirm_del_marker")
+            if st.button("Marker löschen", disabled=not confirm_marker, key="btn_del_marker"):
+                from wildlife_db_mariadb import WildlifeDatabase
+                if WildlifeDatabase().delete_marker(del_marker_id):
+                    st.toast(f"Marker {del_marker_id} gelöscht.", icon="🗑️")
+                    _get_japan_system.clear()
+                    st.rerun()
+                else:
+                    st.error("Löschen fehlgeschlagen (Datenbankverbindung/VPN prüfen).")
+
+    if not df_p.empty:
+        st.markdown("**Gebiete**")
+        st.dataframe(df_p, width="stretch")
+        with st.expander("Gebiet löschen"):
+            _poly_labels = {row["polygon_id"]: f"{row.get('name', '')} ({row['polygon_id']})" for _, row in df_p.iterrows()}
+            del_poly_id = st.selectbox(
+                "Zu löschendes Gebiet", options=list(_poly_labels.keys()),
+                format_func=lambda k: _poly_labels[k], key="del_poly_sel",
+            )
+            confirm_poly = st.checkbox("Ja, wirklich löschen", key="confirm_del_poly")
+            if st.button("Gebiet löschen", disabled=not confirm_poly, key="btn_del_poly"):
+                from wildlife_db_mariadb import WildlifeDatabase
+                if WildlifeDatabase().delete_polygon(del_poly_id):
+                    st.toast(f"Gebiet {del_poly_id} gelöscht.", icon="🗑️")
+                    _get_japan_system.clear()
+                    st.rerun()
+                else:
+                    st.error("Löschen fehlgeschlagen (Datenbankverbindung/VPN prüfen).")
+
+    if df_m.empty and df_p.empty:
+        st.info("Keine Marker/Gebiete in der Datenbank.")
+
+with _table_tabs[2]:
+    df = geojson_to_dataframe((carpathian_data or {}).get("points"))
+    st.caption(f"{len(df)} GPS-Punkte im aktuell gewählten Zeitraum/Filter" if not df.empty else "Keine Daten geladen.")
+    if not df.empty:
+        st.dataframe(df, width="stretch")
+
+with _table_tabs[3]:
+    df = geojson_to_dataframe((simulation_data or {}).get("points"))
+    st.caption(f"{len(df)} simulierte Punkte (echt + Alternativen)" if not df.empty else "Keine Daten geladen.")
+    if not df.empty:
+        st.dataframe(df, width="stretch")
+
+with _table_tabs[4]:
+    df = geojson_to_dataframe(wolf_lynx_data)
+    st.caption(f"{len(df)} Rasterzellen (Wolf + Luchs)" if not df.empty else "Keine Daten geladen (Haken bei „Externe Vergleichsdaten“ gesetzt?).")
+    if not df.empty:
+        st.dataframe(df, width="stretch")
+
+with _table_tabs[5]:
+    df = geojson_to_dataframe(gbif_bears_data)
+    st.caption(f"{len(df)} Bär-Sichtungen (DE + RO)" if not df.empty else "Keine Daten geladen (Haken bei „Externe Vergleichsdaten“ gesetzt?).")
+    if not df.empty:
+        st.dataframe(df, width="stretch")
 
 # ============================================================
 # Footer

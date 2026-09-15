@@ -30,7 +30,7 @@ class WildlifeDatabase:
                 'user': "ursus",
                 'password': "thibetanus",
                 'database': "ursus",
-                'connection_timeout': 5,
+                'connection_timeout': 15,
             }
         else:
             # Normal MariaDB initialization
@@ -40,7 +40,7 @@ class WildlifeDatabase:
                 'user': user,
                 'password': password,
                 'database': database,
-                'connection_timeout': 5,
+                'connection_timeout': 15,
             }
         
         # Initialize the coordinate transformer

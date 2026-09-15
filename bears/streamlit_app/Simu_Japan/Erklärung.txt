@@ -1,0 +1,40 @@
+Die Methode Schritt für Schritt – zum Verstehen und Erklären
+Das Gesamtbild zuerst (Bild „5 overview")
+
+Zwei getrennte Ströme, die am Ende in einer Zahl zusammenlaufen: links eure echten Fotos, rechts der simulierte Bär. Beide werden auf dieselbe Art in eine Tagesrhythmus-Kurve verwandelt, dann verglichen. Alles, was danach kommt, erklärt nur noch die einzelnen Kästen genauer.
+
+Schritt 1: Wie aus einzelnen Fotos eine Kurve wird (Bild „1")
+
+Ihr habt keine Kurve, ihr habt einzelne Zeitpunkte – "Foto um 19:06 Uhr", "Foto um 20:31 Uhr". Um daraus ein Muster sichtbar zu machen, wird über jeden einzelnen Zeitpunkt eine kleine, sanfte Glockenkurve gelegt (das ist die eigentliche Bedeutung von "Kerndichteschätzung" – nichts anderes als: jeder Punkt kriegt eine kleine Wolke um sich herum). Legt man alle diese Wolken übereinander und addiert sie, entsteht die durchgezogene Kurve rechts im Bild. Dort, wo viele Fotos nah beieinander liegen, türmt sich die Kurve auf; wo nichts ist, bleibt sie flach.
+
+Warum nicht einfach ein Histogramm (Balken pro Stunde)? Ein Histogramm hängt stark davon ab, wo genau die Stundengrenzen gezogen werden – ein Foto um 19:59 Uhr landet in einem ganz anderen Balken als eins um 20:01 Uhr, obwohl sie praktisch zur selben Zeit passierten. Die geglättete Kurve hat dieses Problem nicht.
+
+Schritt 2: Warum ein Kreis, keine Linie (Bild „2")
+
+Das ist der Teil, der beim ersten Hinsehen am wenigsten intuitiv ist – aber genau der Teil, den ihr im Seminar am ehesten erklären müsst, weil er zeigt, dass ihr das Verfahren wirklich verstanden habt, nicht nur eine Bibliothek aufgerufen habt.
+
+Eine Uhrzeit ist kein Punkt auf einer Linie von 0 bis 24 – sie ist ein Punkt auf einem Kreis. 23:50 Uhr und 00:10 Uhr liegen 20 Minuten auseinander, nicht 23 Stunden und 40 Minuten. Behandelt man die Zeitachse trotzdem wie eine gerade Linie, "sieht" die Berechnung bei 0 Uhr die Fotos von kurz vor Mitternacht nicht – für sie sind die 23 Stunden entfernt. Das Ergebnis: ein künstlicher Bruch genau an der Stelle, die inhaltlich am wichtigsten ist (Mitternacht ist mitten in der Nachtaktivität, nicht am Rand).
+
+Im Bild seht ihr das an einem Extrembeispiel: 5 Fotos kurz vor Mitternacht, 1 Foto kurz danach – eigentlich ein einziges, zusammenhängendes nächtliches Ereignis. Die falsche Methode (links) reißt das auseinander, die Dichte bricht bei Mitternacht sprunghaft von 0,34 auf 0,086 ein. Die richtige, "gekreiste" Methode (rechts) erkennt: das gehört zusammen, ein durchgehender Hügel.
+
+Der Trick dahinter ist einfach: Man rechnet nicht nur mit den echten Zeiten, sondern kopiert sie sich gedanklich zusätzlich einen Tag früher und einen Tag später. Ein Foto um 23:30 Uhr taucht dann auch als "gestern 23:30" und "übermorgen 23:30" mit auf – wodurch es plötzlich auch die Berechnung bei 0:30 Uhr "sehen" kann.
+
+Schritt 3: Was Δ eigentlich misst (Bild „3")
+
+Jetzt habt ihr zwei Kurven – eine für echt, eine für simuliert. Δ ist denkbar einfach: die Fläche, die beide Kurven gemeinsam haben (grau eingefärbt). Legt man zwei fast identische Kurven übereinander, ist fast die ganze Fläche grau – Δ nahe 1. Zeigen beide Kurven in völlig unterschiedliche Richtungen, bleibt kaum graue Fläche übrig – Δ nahe 0.
+
+Das ist buchstäblich die ganze Idee. Kein komplizierterer Gedanke dahinter, nur präzise in eine Fläche gegossen statt "die sehen irgendwie ähnlich aus" zu sagen.
+
+Schritt 4: Warum nicht einfach eine Zahl reicht (Bild „4")
+
+52 echte Fotos sind wenig. Hättet ihr durch Zufall 5 andere Fotos erwischt, wäre Δ vielleicht 0,58 statt 0,63 herausgekommen. Um zu zeigen, wie stark das Ergebnis vom Zufall der Stichprobe abhängt, macht man Folgendes: Aus den vorhandenen Daten wird mit Zurücklegen neu gezogen (manche Fotos also mehrfach, andere gar nicht) – so, als hätte man die Beobachtung leicht anders wiederholt – und Δ wird neu berechnet. Das passiert 1000 Mal.
+
+Das Histogramm im Bild zeigt das Ergebnis: eine Glockenform um den echten Δ-Wert herum. Die roten Linien schneiden die mittleren 95 % dieser 1000 Werte ab – das ist euer Konfidenzintervall. Es sagt: "Selbst wenn die Stichprobe leicht anders ausgefallen wäre, läge Δ mit hoher Wahrscheinlichkeit in diesem Bereich."
+
+Euer echtes Ergebnis, damit erklärt
+
+Δ = 0,63, mit 95-%-Bereich [0,55, 0,69].
+
+Übersetzt: Die simulierten und die echten Aktivitätszeiten überlappen sich zu etwas mehr als der Hälfte – deutlich mehr als Zufall (das wäre nahe 0), aber auch klar nicht perfekt (das wäre nahe 1). Und weil das Intervall recht schmal ist (0,55 bis 0,69, nicht z.B. 0,2 bis 0,9), ist das Ergebnis trotz der kleinen Stichprobe nicht bloß Zufall – es steht auf einigermaßen stabilem Boden.
+
+Fürs Seminar, falls gefragt wird "was heißt das jetzt fachlich": Ein rumänisches Braunbär-Bewegungsmuster erklärt gut die Hälfte des zeitlichen Musters japanischer Kragenbär-Auslösungen – ein Teil der Übereinstimmung geht vermutlich auf tatsächlich ähnliche biologische Rhythmen zurück (beide Arten sind überwiegend dämmerungs-/nachtaktiv), der Rest der Abweichung auf die echten Unterschiede zwischen den Arten und Lebensräumen.

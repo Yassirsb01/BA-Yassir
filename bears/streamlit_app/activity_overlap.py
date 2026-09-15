@@ -138,7 +138,8 @@ def run_monte_carlo_virtual_detections(
     detection_radius_m: float = DETECTION_RADIUS_M,
     seed: int = 42,
     terrain_cache=None,
-) -> list[float]:
+    capture_run: bool = False,
+) -> tuple[list[float], dict | None]:
     """
     Simuliert n_runs unabhaengige Baerenpfade (je hours_per_run Stunden lang)
     ab zufaelligen Kamerastandorten, mit zufaelligem Geschlecht/Alter/Saison
@@ -149,6 +150,24 @@ def run_monte_carlo_virtual_detections(
 
     Der Startpunkt selbst (= eine Kamera per Definition) wird NICHT
     mitgezaehlt, sonst waere jeder Lauf trivial "sofort erkannt".
+
+    Args:
+        capture_run: Falls True, wird zusaetzlich EIN kompletter Lauf (Pfad +
+            Detektions-Ereignisse) zurueckgegeben - fuer eine Animation in der
+            Oberflaeche. Es ist bewusst NICHT der Lauf mit den meisten
+            Treffern (das waere Rosinenpickerei fuer eine huebschere Demo),
+            sondern schlicht der ERSTE Lauf mit mindestens einer Detektion
+            (unter den ersten 15 Laeufen durchsucht, damit die Animation nicht
+            zufaellig einen komplett leeren Lauf erwischt und wie ein Fehler
+            aussieht) - klar als "ein zufaelliger Lauf, kein Best-Case" in
+            der Oberflaeche zu kennzeichnen.
+
+    Returns:
+        (virtual_hours, captured_run) - captured_run ist None, falls
+        capture_run=False oder kein Lauf unter den ersten 15 Treffer hatte.
+        captured_run ist sonst ein Dict:
+          {"path": [...], "detections": [{"time": datetime, "lat", "lng",
+           "camera_id"}], "start_camera": {...}}
     """
     cameras = load_japan_cameras()
     if not cameras:
@@ -159,8 +178,10 @@ def run_monte_carlo_virtual_detections(
     rng = np.random.default_rng(seed)
 
     virtual_hours: list[float] = []
+    captured_run: dict | None = None
+    capture_search_budget = 15  # nur die ersten N Laeufe als Kandidat pruefen, siehe Docstring
 
-    for _ in range(n_runs):
+    for run_idx in range(n_runs):
         start_cam = cameras[rng.integers(0, len(cameras))]
         gender = VALID_GENDERS[rng.integers(0, len(VALID_GENDERS))]
         age = VALID_AGES[rng.integers(0, len(VALID_AGES))]
@@ -176,15 +197,30 @@ def run_monte_carlo_virtual_detections(
             terrain_cache=terrain_cache,
         )
 
+        run_detections = []  # nur fuer diesen Lauf, falls er als "captured" in Frage kommt
         for point in path[1:]:  # [0] ist der Startpunkt = eine Kamera -> ausschliessen
             pos = (point["lat"], point["lng"])
             for cam in cameras:
                 if geodesic(pos, (cam["lat"], cam["lng"])).meters <= detection_radius_m:
                     t = point["time"]
                     virtual_hours.append(t.hour + t.minute / 60.0)
+                    run_detections.append({
+                        "time": t, "lat": point["lat"], "lng": point["lng"],
+                        "camera_id": cam.get("device_id"),
+                        "camera_lat": cam["lat"], "camera_lng": cam["lng"],
+                    })
                     break  # eine Ausloesung pro Zeitschritt reicht, nicht pro Kamera doppelt zaehlen
 
-    return virtual_hours
+        if capture_run and captured_run is None and run_idx < capture_search_budget:
+            if run_detections:
+                captured_run = {"path": path, "detections": run_detections, "start_camera": start_cam}
+            elif run_idx == capture_search_budget - 1:
+                # Kein einziger der ersten 15 Laeufe hatte eine Detektion -
+                # dann lieber den letzten davon (leer) zeigen als gar keinen,
+                # transparent als "kein Treffer in diesem Beispiel" kennzeichenbar.
+                captured_run = {"path": path, "detections": [], "start_camera": start_cam}
+
+    return virtual_hours, captured_run
 
 
 # =========================================================
@@ -215,9 +251,13 @@ def overlap_coefficient(f1: np.ndarray, f2: np.ndarray, dx: float) -> float:
 
 def bootstrap_delta_ci(
     real_hours, sim_hours, grid: np.ndarray, bandwidth: float,
-    n_boot: int = 1000, seed: int = 42,
-) -> tuple[float, float, float]:
-    """Bootstrap-Konfidenzintervall fuer Delta (2.5%, Median, 97.5%)."""
+    n_boot: int = 1000, seed: int = 42, return_samples: bool = False,
+):
+    """Bootstrap-Konfidenzintervall fuer Delta (2.5%, Median, 97.5%).
+
+    return_samples=True liefert zusaetzlich alle n_boot Delta-Werte zurueck
+    (fuer ein Histogramm in der Oberflaeche) - Standardfall (False) bleibt
+    unveraendert zum bisherigen Verhalten."""
     rng = np.random.default_rng(seed)
     real_hours = np.asarray(real_hours, dtype=float)
     sim_hours = np.asarray(sim_hours, dtype=float)
@@ -234,16 +274,21 @@ def bootstrap_delta_ci(
         deltas[i] = overlap_coefficient(f1, f2, dx)
 
     lo, med, hi = np.percentile(deltas, [2.5, 50, 97.5])
+    if return_samples:
+        return float(lo), float(med), float(hi), deltas
     return float(lo), float(med), float(hi)
 
 
 # =========================================================
-# 4) Diagramm (fuer die Thesis-Dokumentation)
+# 4) Diagramme (von Skript UND Streamlit-Seite gemeinsam genutzt -
+#    eine einzige Implementierung, damit beide niemals auseinanderlaufen)
 # =========================================================
-def plot_activity_overlap(grid, f_real, f_sim, delta, ci_low, ci_high,
-                           n_real, n_sim, out_path="activity_overlap.png"):
+def build_activity_overlap_figure(grid, f_real, f_sim, delta, ci_low, ci_high, n_real, n_sim):
+    """Erzeugt die Vergleichs-Abbildung als matplotlib-Figure (wird NICHT
+    gespeichert - das macht der Aufrufer, je nach Kontext unterschiedlich:
+    Skript -> Datei, Streamlit-Seite -> st.pyplot())."""
     import matplotlib
-    matplotlib.use("Agg")  # kein Display noetig, nur Datei schreiben
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(9, 5))
@@ -260,6 +305,35 @@ def plot_activity_overlap(grid, f_real, f_sim, delta, ci_low, ci_high,
     ax.set_title(f"Tagesrhythmus-Vergleich: Δ = {delta:.2f}  (95%-Bootstrap-KI [{ci_low:.2f}, {ci_high:.2f}])")
     ax.legend(loc="upper left", fontsize=9)
     fig.tight_layout()
+    return fig
+
+
+def build_bootstrap_histogram_figure(deltas: np.ndarray, delta_point: float, ci_low: float, ci_high: float):
+    """Histogramm der Bootstrap-Delta-Werte mit Punktschaetzung + Konfidenzband."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    ax.hist(deltas, bins=40, color="#8fb8dd", edgecolor="white")
+    ax.axvline(delta_point, color="black", lw=2.2, label=f"Δ aus den Originaldaten = {delta_point:.2f}")
+    ax.axvline(ci_low, color="#c0392b", lw=1.8, ls="--", label=f"95%-Grenzen: [{ci_low:.2f}, {ci_high:.2f}]")
+    ax.axvline(ci_high, color="#c0392b", lw=1.8, ls="--")
+    ax.axvspan(ci_low, ci_high, color="#c0392b", alpha=0.08)
+    ax.set_xlabel("Δ-Wert einer einzelnen Wiederholung")
+    ax.set_ylabel(f"Anzahl der {len(deltas)} Wiederholungen")
+    ax.set_title("Bootstrap: wie stark streut Δ bei leicht anderer Stichprobe?")
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    return fig
+
+
+def plot_activity_overlap(grid, f_real, f_sim, delta, ci_low, ci_high,
+                           n_real, n_sim, out_path="activity_overlap.png"):
+    """Duenner Wrapper um build_activity_overlap_figure() fuer den
+    Kommandozeilen-Gebrauch (speichert zusaetzlich als Datei)."""
+    import matplotlib.pyplot as plt
+    fig = build_activity_overlap_figure(grid, f_real, f_sim, delta, ci_low, ci_high, n_real, n_sim)
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     return out_path
@@ -282,69 +356,108 @@ def run_full_analysis(
     print("Tagesrhythmus-Vergleich: echte Japan-Detektionen vs. simulierter Bär")
     print("=" * 70)
 
+    print(f"Starte Monte-Carlo-Simulation: {n_runs} Läufe × {hours_per_run}h "
+          f"(Erfassungsradius {detection_radius_m}m)...")
+    result = compute_comparison(
+        n_runs=n_runs, hours_per_run=hours_per_run, detection_radius_m=detection_radius_m,
+        bandwidth=bandwidth, n_boot=n_boot, use_terrain=use_terrain, seed=seed,
+    )
+
+    if not result["db_ok"]:
+        print("[Hinweis] MariaDB nicht erreichbar (VPN aktiv?) - "
+              "es wird nur die simulierte Seite berechnet, kein Vergleich möglich.")
+    else:
+        print(f"Echte Detektionen: {result['n_real']} "
+              f"({result['n_excluded']} Platzhalter-Geräte-IDs ausgeschlossen)")
+        if result["n_real"] < 20:
+            print("[Hinweis] Kleine Stichprobe (<20) - Ergebnis nur explorativ interpretierbar, "
+                  "siehe Bootstrap-Konfidenzintervall unten.")
+
+    print(f"Virtuelle Detektionen (simuliert): {result['n_sim']}")
+    if not result["n_sim"]:
+        print("Keine virtuellen Detektionen erzeugt - Radius vergrößern oder mehr Läufe/Stunden.")
+        return None
+    if not result["n_real"]:
+        print("\nKein Vergleich möglich ohne echte Daten (siehe Hinweis oben).")
+        return result
+
+    print(f"\nÜberlappungskoeffizient Δ = {result['delta']:.3f}")
+    print(f"95%-Bootstrap-Konfidenzintervall: [{result['ci_low']:.3f}, {result['ci_high']:.3f}]")
+
+    saved_to = plot_activity_overlap(
+        result["grid"], result["f_real"], result["f_sim"], result["delta"],
+        result["ci_low"], result["ci_high"],
+        n_real=result["n_real"], n_sim=result["n_sim"], out_path=out_path,
+    )
+    print(f"\nDiagramm gespeichert: {saved_to}")
+    result["plot_path"] = saved_to
+    return result
+
+
+def compute_comparison(
+    n_runs: int = 300,
+    hours_per_run: int = 48,
+    detection_radius_m: float = DETECTION_RADIUS_M,
+    bandwidth: float = 1.5,
+    n_boot: int = 1000,
+    use_terrain: bool = False,
+    seed: int = 42,
+    capture_run: bool = False,
+) -> dict:
+    """
+    Einziger Ort, an dem die komplette Berechnung passiert - vom Konsolen-
+    Skript (run_full_analysis) UND von der Streamlit-Seite gleichermassen
+    genutzt, damit es niemals zwei Implementierungen gibt, die im Ergebnis
+    auseinanderlaufen koennten.
+
+    Wirft KEINE Exception bei fehlender DB-Verbindung - meldet das ueber
+    result["db_ok"] = False, result["delta"] = None, laesst aber die
+    Simulation trotzdem laufen (z.B. fuer die Kartenanimation allein).
+    """
     db = WildlifeDatabase()
     db_ok = check_db_reachable_bounded(db)
     real_hours, n_excluded = ([], 0)
     if db_ok:
         real_hours, n_excluded = get_real_detection_hours(db)
-        print(f"Echte Detektionen: {len(real_hours)} "
-              f"({n_excluded} Platzhalter-Geräte-IDs ausgeschlossen)")
-        if len(real_hours) < 20:
-            print("[Hinweis] Kleine Stichprobe (<20) - Ergebnis nur explorativ interpretierbar, "
-                  "siehe Bootstrap-Konfidenzintervall unten.")
-    else:
-        print("[Hinweis] MariaDB nicht erreichbar (VPN aktiv?) - "
-              "es wird nur die simulierte Seite berechnet, kein Vergleich möglich.")
 
     terrain_cache = None
     if use_terrain:
         from terrain_cache import TerrainCache
         terrain_cache = TerrainCache()
 
-    print(f"\nStarte Monte-Carlo-Simulation: {n_runs} Läufe × {hours_per_run}h "
-          f"(Erfassungsradius {detection_radius_m}m)...")
-    sim_hours = run_monte_carlo_virtual_detections(
+    sim_hours, captured_run = run_monte_carlo_virtual_detections(
         n_runs=n_runs, hours_per_run=hours_per_run,
-        detection_radius_m=detection_radius_m, seed=seed, terrain_cache=terrain_cache,
+        detection_radius_m=detection_radius_m, seed=seed,
+        terrain_cache=terrain_cache, capture_run=capture_run,
     )
-    print(f"Virtuelle Detektionen (simuliert): {len(sim_hours)}")
 
-    if not sim_hours:
-        print("Keine virtuellen Detektionen erzeugt - Radius vergrößern oder mehr Läufe/Stunden.")
-        return None
+    result = {
+        "db_ok": db_ok, "n_real": len(real_hours), "n_excluded": n_excluded,
+        "n_sim": len(sim_hours), "sim_hours": sim_hours, "real_hours": real_hours,
+        "captured_run": captured_run,
+        "delta": None, "ci_low": None, "ci_high": None,
+        "grid": None, "f_real": None, "f_sim": None, "boot_deltas": None,
+    }
 
-    if not real_hours:
-        print("\nKein Vergleich möglich ohne echte Daten (siehe Hinweis oben).")
-        return {"n_real": 0, "n_sim": len(sim_hours), "delta": None}
+    if not sim_hours or not real_hours:
+        return result
 
-    grid = np.linspace(0, 24, 481)  # alle 3 Minuten
+    grid = np.linspace(0, 24, 481)
     dx = grid[1] - grid[0]
-
     f_real = circular_kde(real_hours, grid, bandwidth)
     f_sim = circular_kde(sim_hours, grid, bandwidth)
     f_real = f_real / max(f_real.sum() * dx, 1e-12)
     f_sim = f_sim / max(f_sim.sum() * dx, 1e-12)
-
     delta = overlap_coefficient(f_real, f_sim, dx)
-    print(f"\nÜberlappungskoeffizient Δ = {delta:.3f}")
-
-    print(f"Berechne Bootstrap-Konfidenzintervall ({n_boot} Wiederholungen)...")
-    ci_low, ci_med, ci_high = bootstrap_delta_ci(
-        real_hours, sim_hours, grid, bandwidth, n_boot=n_boot, seed=seed
+    ci_low, ci_med, ci_high, boot_deltas = bootstrap_delta_ci(
+        real_hours, sim_hours, grid, bandwidth, n_boot=n_boot, seed=seed, return_samples=True,
     )
-    print(f"95%-Bootstrap-Konfidenzintervall: [{ci_low:.3f}, {ci_high:.3f}]  (Median {ci_med:.3f})")
 
-    saved_to = plot_activity_overlap(
-        grid, f_real, f_sim, delta, ci_low, ci_high,
-        n_real=len(real_hours), n_sim=len(sim_hours), out_path=out_path,
-    )
-    print(f"\nDiagramm gespeichert: {saved_to}")
-
-    return {
-        "n_real": len(real_hours), "n_excluded": n_excluded, "n_sim": len(sim_hours),
+    result.update({
         "delta": delta, "ci_low": ci_low, "ci_high": ci_high,
-        "plot_path": saved_to,
-    }
+        "grid": grid, "f_real": f_real, "f_sim": f_sim, "boot_deltas": boot_deltas,
+    })
+    return result
 
 
 if __name__ == "__main__":

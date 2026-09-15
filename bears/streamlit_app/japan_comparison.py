@@ -33,6 +33,7 @@ Datenquellen:
 """
 
 import csv
+import math
 import os
 import random
 import sys
@@ -119,43 +120,85 @@ TERRAIN_PREFERENCE = {
     "railway": -2, "city": -3, "town": -3, "village": -2, "suburb": -2,
 }
 
+# Wie stark ein Schritt bevorzugt in etwa dieselbe Richtung wie der
+# vorherige geht (= "Richtungstraegheit", korrelierter Random Walk). Auf
+# derselben Groessenordnung wie TERRAIN_PREFERENCE gehalten, damit sich
+# beide Signale sinnvoll die Waage halten koennen.
+DEFAULT_PERSISTENCE_WEIGHT = 2.5
+
 
 def _score_terrain(features: dict) -> float:
     """Bewertet ein Gelaende-Feature-Dict anhand von TERRAIN_PREFERENCE."""
     return sum(weight for key, weight in TERRAIN_PREFERENCE.items() if features.get(key))
 
 
-def choose_terrain_weighted_direction(
+def _angular_diff_deg(a: float, b: float) -> float:
+    """Kleinster Winkel zwischen zwei Richtungen (0-180 Grad)."""
+    d = abs(a - b) % 360
+    return d if d <= 180 else 360 - d
+
+
+def choose_weighted_direction(
     current: tuple[float, float],
     step_length_m: float,
-    terrain_cache: "TerrainCache",
     rng: random.Random,
+    terrain_cache: "TerrainCache | None" = None,
+    prev_direction: float | None = None,
+    persistence_weight: float = DEFAULT_PERSISTENCE_WEIGHT,
     num_candidates: int = 8,
     query_radius_m: int = 150,
-) -> tuple[float, float]:
+) -> tuple[tuple[float, float], float]:
     """
-    Statt einer komplett zufaelligen Richtung: mehrere gleichmaessig verteilte
-    Kandidatenrichtungen (+ etwas Zufalls-Jitter) generieren, fuer jede das
-    Gelaende am Zielpunkt abfragen (gecacht), und eine Richtung gewichtet
-    nach Gelaende-Praeferenz auswaehlen (kein striktes Maximum - sonst waere
-    es deterministisch, kein Random Walk mehr).
+    Waehlt die naechste Richtung gewichtet nach ZWEI ggf. kombinierten Signalen
+    (statt komplett zufaellig):
+
+      1. Gelaende-Praeferenz (siehe TERRAIN_PREFERENCE) - falls terrain_cache
+         angegeben ist. Macht den Pfad landschaftlich plausibler (Wald statt
+         Strasse/Siedlung).
+      2. Richtungstraegheit (correlated random walk) - falls prev_direction
+         angegeben ist. Kandidaten nah an der vorherigen Richtung werden
+         bevorzugt, echte Kehrtwenden abgewertet. Macht den Pfad zu einer
+         erkennbaren Wanderbewegung statt eines Zitterns auf der Stelle
+         (genau das Problem, das bei reinem Wuerfeln jeden Schritt neu
+         auftrat - der Baer "hing" oft nahe seines Startpunkts fest).
+
+    Beide Signale sind unabhaengig optional und werden additiv kombiniert,
+    falls beide vorhanden sind. Die Auswahl bleibt danach weiterhin
+    gewichtet-zufaellig (kein striktes Maximum) - sonst waere es kein Random
+    Walk mehr, sondern ein deterministischer Pfad.
+
+    Returns:
+        (destination, chosen_direction_deg) - die Richtung wird
+        zurueckgegeben, damit der naechste Aufruf sie als prev_direction
+        nutzen kann.
     """
     candidates = []
     for i in range(num_candidates):
         base_angle = (360.0 / num_candidates) * i
         direction = (base_angle + rng.uniform(-15, 15)) % 360
-        dest = GeoToolBox.destination_point(current, direction, step_length_m)
-        features = terrain_cache.get_features(dest[0], dest[1], radius=query_radius_m)
-        score = _score_terrain(features)
-        candidates.append((dest, score))
 
-    scores = [c[1] for c in candidates]
+        score = 0.0
+        if terrain_cache is not None:
+            dest = GeoToolBox.destination_point(current, direction, step_length_m)
+            features = terrain_cache.get_features(dest[0], dest[1], radius=query_radius_m)
+            score += _score_terrain(features)
+        else:
+            dest = GeoToolBox.destination_point(current, direction, step_length_m)
+
+        if prev_direction is not None:
+            angle_diff = _angular_diff_deg(direction, prev_direction)
+            # cos(0)=1 (gleiche Richtung, voller Bonus) ... cos(180)=-1 (Kehrtwende, voller Abzug)
+            score += persistence_weight * math.cos(math.radians(angle_diff))
+
+        candidates.append((dest, direction, score))
+
+    scores = [c[2] for c in candidates]
     shifted = [s - min(scores) + 0.5 for s in scores]  # alle positiv, keiner exakt 0
     total = sum(shifted)
     weights = [s / total for s in shifted]
 
-    chosen_dest, _ = rng.choices(candidates, weights=weights, k=1)[0]
-    return chosen_dest
+    chosen_dest, chosen_direction, _ = rng.choices(candidates, weights=weights, k=1)[0]
+    return chosen_dest, chosen_direction
 
 
 def simulate_free_path(
@@ -170,6 +213,8 @@ def simulate_free_path(
     source: str = SIM_SOURCE,
     seed: int | None = None,
     terrain_cache: "TerrainCache | None" = None,
+    use_directional_persistence: bool = True,
+    persistence_weight: float = DEFAULT_PERSISTENCE_WEIGHT,
 ) -> list[dict]:
     """
     Simuliert einen Pfad ab einem freien Startpunkt, Stunde fuer Stunde.
@@ -180,9 +225,15 @@ def simulate_free_path(
 
     Args:
         terrain_cache: Falls angegeben, wird bei jedem Schritt die Richtung
-            gelaende-gewichtet gewaehlt (siehe choose_terrain_weighted_direction)
-            statt komplett zufaellig - macht die Basisversion realistischer,
-            braucht aber (gecachte) Overpass-Abfragen.
+            zusaetzlich gelaende-gewichtet gewaehlt (Wald bevorzugt) - macht
+            die Basisversion realistischer, braucht aber (gecachte)
+            Overpass-Abfragen.
+        use_directional_persistence: Ob die Richtung von Schritt zu Schritt
+            traege bleibt (korrelierter Random Walk) statt jedes Mal komplett
+            neu zu wuerfeln. Standardmaessig an, weil eine rein zufaellige
+            Neuwahl jeden Schritt dazu fuehrt, dass der simulierte Baer
+            effektiv auf der Stelle "zittert" statt sich glaubwuerdig
+            fortzubewegen.
 
     Returns:
         Liste von {"time": datetime, "lat": float, "lng": float}
@@ -198,6 +249,7 @@ def simulate_free_path(
     path = [{"time": start_time, "lat": start_lat, "lng": start_lng}]
     current = (start_lat, start_lng)
     current_time = start_time
+    prev_direction: float | None = None  # noch keine Vorgeschichte beim ersten Schritt
 
     for _ in range(int(duration_hours)):
         hour = current_time.hour
@@ -208,23 +260,99 @@ def simulate_free_path(
 
         if median_speed_kmh is None:
             # Keine Daten fuer diese Stunde -> Position haelt (kein Schritt),
-            # Zeit laeuft trotzdem weiter.
+            # Zeit laeuft trotzdem weiter. Richtung bleibt fuer den naechsten
+            # tatsaechlichen Schritt erhalten (kein Bruch der Traegheit).
             path.append({"time": current_time, "lat": current[0], "lng": current[1]})
             continue
 
         step_length_m = median_speed_kmh * 1000
 
-        if terrain_cache is not None:
-            current = choose_terrain_weighted_direction(
-                current, step_length_m, terrain_cache, rng
+        if terrain_cache is not None or use_directional_persistence:
+            current, prev_direction = choose_weighted_direction(
+                current, step_length_m, rng,
+                terrain_cache=terrain_cache,
+                prev_direction=prev_direction if use_directional_persistence else None,
+                persistence_weight=persistence_weight,
             )
         else:
-            direction_deg = rng.uniform(0, 360)  # keine Gelaende-Praeferenz
+            direction_deg = rng.uniform(0, 360)  # komplett zufaellig (alte Basisversion)
             current = GeoToolBox.destination_point(current, direction_deg, step_length_m)
+            prev_direction = direction_deg
 
         path.append({"time": current_time, "lat": current[0], "lng": current[1]})
 
     return path
+
+
+# Bekannte Platzhalter-Geraete-IDs (fehlgeschlagene Erkennung beim
+# E-Mail-Import) - siehe check_japan_data.py / activity_overlap.py.
+PLACEHOLDER_DEVICE_IDS = {"199999", "999999"}
+
+
+def get_real_events_for_camera(db: "WildlifeDatabase", device_id: str) -> list[datetime]:
+    """
+    Volle Zeitstempel (nicht nur Stunden) aller echten Fotos AN EINER
+    BESTIMMTEN Kamera - aus bears_images_unified (Dateisystem + E-Mail
+    zusammen, vollstaendiger als die aeltere image_metadata-Tabelle).
+
+    Wird gebraucht, um (a) einen echten Startzeitpunkt fuer die Simulation
+    auszuwaehlen und (b) echte Ausloesezeiten zum Vergleich auf der
+    Animations-Zeitleiste einzuzeichnen.
+    """
+    if device_id in PLACEHOLDER_DEVICE_IDS:
+        return []
+    rows = db.execute_query(
+        "SELECT timestamp FROM bears_images_unified WHERE device_id = %s AND timestamp IS NOT NULL",
+        [device_id],
+    )
+    events = []
+    for r in rows or []:
+        ts = r.get("timestamp")
+        try:
+            dt = ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts))
+            events.append(dt)
+        except (ValueError, TypeError):
+            continue
+    return sorted(events)
+
+
+def simulate_multiple_bears_from_sighting(
+    start_lat: float,
+    start_lng: float,
+    start_time: datetime,
+    n_bears: int,
+    duration_hours: int,
+    bear_speeds: "BearSpeeds",
+    seed: int = 42,
+    terrain_cache: "TerrainCache | None" = None,
+    use_directional_persistence: bool = True,
+) -> list[dict]:
+    """
+    Simuliert N unabhaengige Baeren, die alle an DERSELBEN echten Foto-
+    Position und -Uhrzeit "starten" (so, als waere das der Moment einer
+    echten Sichtung) - jeder mit zufaelligem Geschlecht/Alter/Saison, um
+    ueber die unbekannte Demografie zu mitteln, und jeder mit eigenem Zufalls-
+    Seed, damit sich die Pfade sichtbar unterscheiden.
+
+    Returns:
+        Liste von {"bear_index": int, "gender", "age", "season", "path": [...]}
+    """
+    rng = random.Random(seed)
+    bears = []
+    for i in range(n_bears):
+        gender = VALID_GENDERS[rng.randrange(len(VALID_GENDERS))]
+        age = VALID_AGES[rng.randrange(len(VALID_AGES))]
+        season = VALID_SEASONS[rng.randrange(len(VALID_SEASONS))]
+        bear_seed = rng.randrange(10_000_000)
+
+        path = simulate_free_path(
+            start_lat=start_lat, start_lng=start_lng, start_time=start_time,
+            duration_hours=duration_hours, gender=gender, age=age, season=season,
+            bear_speeds=bear_speeds, seed=bear_seed, terrain_cache=terrain_cache,
+            use_directional_persistence=use_directional_persistence,
+        )
+        bears.append({"bear_index": i, "gender": gender, "age": age, "season": season, "path": path})
+    return bears
 
 
 def check_db_reachable(db: "WildlifeDatabase") -> bool:
@@ -336,7 +464,7 @@ def run_experiment(
     Kompletter Durchlauf: laden -> simulieren -> abgleichen -> Ergebnis.
 
     use_terrain=True: Richtung wird gelaende-gewichtet gewaehlt (siehe
-    choose_terrain_weighted_direction), braucht Internetzugang beim ersten
+    choose_weighted_direction), braucht Internetzugang beim ersten
     Mal pro Rasterfeld (danach lokal gecacht in terrain_cache.db).
     use_terrain=False (Standard): reine Zufallsrichtung, keine Overpass-
     Abfragen noetig - schneller, aber die "blinde" Basisversion.

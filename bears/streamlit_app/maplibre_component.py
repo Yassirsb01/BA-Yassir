@@ -213,6 +213,21 @@ def render_maplibre(
     .bm-label {{ font-size:12px; color:#555; display:block; margin-bottom:4px; }}
     #basemap-select {{ width:100%; padding:5px 6px; border-radius:6px;
                        border:1px solid #ccc; font-size:13px; background:#fff; cursor:pointer; }}
+
+    .draw-panel {{ top:10px; right:10px; left:auto; min-width:220px; }}
+    .draw-mode-row {{ display:flex; gap:6px; margin-bottom:8px; }}
+    .draw-mode-btn {{ flex:1; padding:6px 4px; border-radius:6px; border:1px solid #ccc;
+                       background:#f7f7f7; cursor:pointer; font-size:12px; }}
+    .draw-mode-btn.active {{ background:#2a6fdb; color:#fff; border-color:#2a6fdb; }}
+    .draw-hint {{ font-size:11.5px; color:#666; margin-bottom:8px; line-height:1.4; min-height:32px; }}
+    #draw-name-input {{ width:100%; padding:5px 6px; border-radius:6px; border:1px solid #ccc;
+                         font-size:12px; margin-bottom:8px; box-sizing:border-box; display:none; }}
+    .draw-actions {{ display:flex; gap:6px; }}
+    .draw-actions button {{ flex:1; padding:6px 4px; border-radius:6px; border:1px solid #ccc;
+                             font-size:12px; cursor:pointer; }}
+    #draw-save-btn {{ background:#2a8f2a; color:#fff; border-color:#2a8f2a; }}
+    #draw-save-btn:disabled {{ background:#a8d5a8; border-color:#a8d5a8; cursor:not-allowed; }}
+    #draw-undo-btn, #draw-cancel-btn {{ background:#f7f7f7; }}
   </style>
 </head>
 <body>
@@ -223,6 +238,21 @@ def render_maplibre(
     <div class="sep"></div>
     <label class="bm-label">Kartenstil</label>
     <select id="basemap-select">{bm_options}</select>
+  </div>
+
+  <div class="panel draw-panel">
+    <div class="title">Neuer Eintrag (Japan)</div>
+    <div class="draw-mode-row">
+      <button class="draw-mode-btn" id="mode-marker" title="Einzelnen Punkt setzen">📍 Marker</button>
+      <button class="draw-mode-btn" id="mode-polygon" title="Gebiet umranden">▱ Gebiet</button>
+    </div>
+    <div class="draw-hint" id="draw-hint">Modus wählen, dann auf die Karte klicken.</div>
+    <input type="text" id="draw-name-input" placeholder="Name des Gebiets" />
+    <div class="draw-actions">
+      <button id="draw-undo-btn" style="display:none">↩ Letzten Punkt entfernen</button>
+      <button id="draw-cancel-btn" style="display:none">✕ Abbrechen</button>
+      <button id="draw-save-btn" disabled>💾 Speichern</button>
+    </div>
   </div>
 
   <script>
@@ -358,6 +388,21 @@ def render_maplibre(
         paint:{{ 'circle-radius':7,'circle-color':'#d33','circle-stroke-width':2,'circle-stroke-color':'#fff' }} }});
       addLayerSafe({{ id:'jp-markers', type:'circle', source:'jp_markers',
         paint:{{ 'circle-radius':7,'circle-color':'#3186cc','circle-stroke-width':2,'circle-stroke-color':'#fff' }} }});
+
+      // Temporaere Vorschau beim Zeichnen (noch nicht gespeichert) - eigene,
+      // klar unterscheidbare Farbe/Form, damit nicht mit bereits
+      // gespeicherten Eintraegen verwechselt wird.
+      addSrc('draw_marker_preview', {{ type:'FeatureCollection', features:[] }});
+      addSrc('draw_polygon_preview', {{ type:'FeatureCollection', features:[] }});
+      addSrc('draw_polygon_points', {{ type:'FeatureCollection', features:[] }});
+      addLayerSafe({{ id:'draw-marker-preview', type:'circle', source:'draw_marker_preview',
+        paint:{{ 'circle-radius':9,'circle-color':'#ff9800','circle-stroke-width':2,'circle-stroke-color':'#fff' }} }});
+      addLayerSafe({{ id:'draw-polygon-fill', type:'fill', source:'draw_polygon_preview',
+        paint:{{ 'fill-color':'#ff9800','fill-opacity':0.25 }} }});
+      addLayerSafe({{ id:'draw-polygon-line', type:'line', source:'draw_polygon_preview',
+        paint:{{ 'line-color':'#ff9800','line-width':2,'line-dasharray':[2,1.5] }} }});
+      addLayerSafe({{ id:'draw-polygon-points', type:'circle', source:'draw_polygon_points',
+        paint:{{ 'circle-radius':5,'circle-color':'#ff9800','circle-stroke-width':1.5,'circle-stroke-color':'#fff' }} }});
 
       // CARPATHIAN
       addLayerSafe({{ id:'cp-paths', type:'line', source:'cp_paths',
@@ -528,6 +573,151 @@ def render_maplibre(
       saveStateToUrl();
     }}
 
+    // -------------------------------------------------------
+    // ZEICHNEN: neue Marker/Gebiete erfassen und speichern.
+    //
+    // Technischer Kniff, weil MapLibre hier per components.html() (reines
+    // HTML/JS im iframe) eingebettet ist, nicht als echte bidirektionale
+    // Streamlit-Komponente: Gezeichnete Daten koennen NICHT direkt als
+    // Python-Rueckgabewert zurueckfliessen. Stattdessen (wiederverwendet
+    // dasselbe Prinzip wie saveStateToUrl() oben, aber AKTIV statt passiv):
+    // beim Speichern wird die Geometrie in die URL geschrieben und eine
+    // ECHTE Navigation ausgeloest (location.href, nicht nur
+    // history.replaceState) - das laedt die Streamlit-Seite neu, Python
+    // liest die neuen Query-Parameter aus, speichert in die Datenbank und
+    // entfernt die Parameter wieder (siehe map.py).
+    // -------------------------------------------------------
+    const drawState = {{ mode: null, polygonPoints: [] }};
+
+    function setDrawHint(text) {{ const h = document.getElementById('draw-hint'); if (h) h.textContent = text; }}
+
+    function updateMarkerPreview(lngLat) {{
+      const src = map.getSource('draw_marker_preview');
+      if (!src) return;
+      src.setData(lngLat
+        ? {{ type:'FeatureCollection', features:[{{ type:'Feature', properties:{{}}, geometry:{{type:'Point', coordinates:[lngLat.lng, lngLat.lat]}} }}] }}
+        : {{ type:'FeatureCollection', features:[] }});
+    }}
+
+    function updatePolygonPreview() {{
+      const pts = drawState.polygonPoints;
+      const pointFeatures = pts.map(p => ({{ type:'Feature', properties:{{}}, geometry:{{type:'Point', coordinates:p}} }}));
+      const ptsSrc = map.getSource('draw_polygon_points');
+      if (ptsSrc) ptsSrc.setData({{ type:'FeatureCollection', features:pointFeatures }});
+
+      const polySrc = map.getSource('draw_polygon_preview');
+      if (!polySrc) return;
+      if (pts.length < 2) {{ polySrc.setData({{type:'FeatureCollection', features:[]}}); return; }}
+      const ring = pts.length >= 3 ? [...pts, pts[0]] : pts; // erst ab 3 Punkten schliessen
+      const geomType = pts.length >= 3 ? 'Polygon' : 'LineString';
+      const coords = pts.length >= 3 ? [ring] : ring;
+      polySrc.setData({{ type:'FeatureCollection', features:[{{ type:'Feature', properties:{{}}, geometry:{{type:geomType, coordinates:coords}} }}] }});
+    }}
+
+    function updateSaveButtonState() {{
+      const saveBtn = document.getElementById('draw-save-btn');
+      if (!saveBtn) return;
+      if (drawState.mode === 'marker') {{
+        saveBtn.disabled = !drawState.pendingMarker;
+      }} else if (drawState.mode === 'polygon') {{
+        const nameInput = document.getElementById('draw-name-input');
+        saveBtn.disabled = drawState.polygonPoints.length < 3 || !(nameInput && nameInput.value.trim());
+      }} else {{
+        saveBtn.disabled = true;
+      }}
+    }}
+
+    function resetDrawing(keepMode) {{
+      drawState.polygonPoints = [];
+      drawState.pendingMarker = null;
+      updateMarkerPreview(null);
+      updatePolygonPreview();
+      const nameInput = document.getElementById('draw-name-input');
+      if (nameInput) {{ nameInput.value = ''; nameInput.style.display = 'none'; }}
+      document.getElementById('draw-undo-btn').style.display = 'none';
+      document.getElementById('draw-cancel-btn').style.display = 'none';
+      updateSaveButtonState();
+      if (!keepMode) {{
+        drawState.mode = null;
+        document.getElementById('mode-marker').classList.remove('active');
+        document.getElementById('mode-polygon').classList.remove('active');
+        setDrawHint('Modus wählen, dann auf die Karte klicken.');
+      }}
+    }}
+
+    function onMapClickForDrawing(e) {{
+      if (drawState.mode === 'marker') {{
+        drawState.pendingMarker = e.lngLat;
+        updateMarkerPreview(e.lngLat);
+        setDrawHint(`Punkt gewählt (${{e.lngLat.lat.toFixed(5)}}, ${{e.lngLat.lng.toFixed(5)}}). Speichern oder neu klicken.`);
+        document.getElementById('draw-cancel-btn').style.display = 'block';
+        updateSaveButtonState();
+      }} else if (drawState.mode === 'polygon') {{
+        drawState.polygonPoints.push([e.lngLat.lng, e.lngLat.lat]);
+        updatePolygonPreview();
+        document.getElementById('draw-undo-btn').style.display = 'block';
+        document.getElementById('draw-cancel-btn').style.display = 'block';
+        const nameInput = document.getElementById('draw-name-input');
+        if (drawState.polygonPoints.length >= 3) {{
+          nameInput.style.display = 'block';
+        }}
+        setDrawHint(`${{drawState.polygonPoints.length}} Punkt(e) gesetzt` +
+          (drawState.polygonPoints.length < 3 ? ' (mind. 3 nötig).' : ' - Name eingeben, dann speichern.'));
+        updateSaveButtonState();
+      }}
+    }}
+
+    function saveDrawing() {{
+      try {{
+        const parentWin = window.parent;
+        const url = new URL(parentWin.location.href);
+        if (drawState.mode === 'marker' && drawState.pendingMarker) {{
+          url.searchParams.set('new_marker_lat', drawState.pendingMarker.lat.toFixed(6));
+          url.searchParams.set('new_marker_lng', drawState.pendingMarker.lng.toFixed(6));
+        }} else if (drawState.mode === 'polygon' && drawState.polygonPoints.length >= 3) {{
+          const nameInput = document.getElementById('draw-name-input');
+          url.searchParams.set('new_polygon_name', nameInput.value.trim());
+          url.searchParams.set('new_polygon_coords', JSON.stringify(drawState.polygonPoints));
+        }} else {{
+          return;
+        }}
+        parentWin.location.href = url.toString(); // ECHTE Navigation, loest Streamlit-Rerun aus
+      }} catch (e) {{
+        setDrawHint('Speichern fehlgeschlagen (Cross-Origin?). Bitte Seite manuell neu laden und erneut versuchen.');
+      }}
+    }}
+
+    function wireDrawingControls() {{
+      document.getElementById('mode-marker').addEventListener('click', () => {{
+        resetDrawing(false);
+        drawState.mode = 'marker';
+        document.getElementById('mode-marker').classList.add('active');
+        setDrawHint('Auf die Karte klicken, um den Marker-Standort zu wählen.');
+        map.getCanvas().style.cursor = 'crosshair';
+      }});
+      document.getElementById('mode-polygon').addEventListener('click', () => {{
+        resetDrawing(false);
+        drawState.mode = 'polygon';
+        document.getElementById('mode-polygon').classList.add('active');
+        setDrawHint('Punkte für die Gebietsgrenze anklicken (mind. 3).');
+        map.getCanvas().style.cursor = 'crosshair';
+      }});
+      document.getElementById('draw-undo-btn').addEventListener('click', () => {{
+        drawState.polygonPoints.pop();
+        updatePolygonPreview();
+        if (drawState.polygonPoints.length < 3) document.getElementById('draw-name-input').style.display = 'none';
+        setDrawHint(`${{drawState.polygonPoints.length}} Punkt(e) gesetzt.`);
+        updateSaveButtonState();
+      }});
+      document.getElementById('draw-cancel-btn').addEventListener('click', () => {{
+        resetDrawing(false);
+        map.getCanvas().style.cursor = '';
+      }});
+      document.getElementById('draw-name-input').addEventListener('input', updateSaveButtonState);
+      document.getElementById('draw-save-btn').addEventListener('click', saveDrawing);
+      map.on('click', onMapClickForDrawing);
+    }}
+
     function wireControls() {{
       const bind = (key) => {{
         const cb = document.getElementById(GROUPS[key].id);
@@ -563,6 +753,7 @@ def render_maplibre(
       applyVisibilityFromCheckboxes();
       wirePopups();
       wireControls();
+      wireDrawingControls();
 
       // Fuer bereits sichtbare Layer, deren Daten sich geaendert haben
       // (z.B. neuer Baer/Zeitraum via "Anwenden"), zur neuen Position fliegen -

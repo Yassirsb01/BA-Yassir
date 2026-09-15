@@ -126,7 +126,7 @@ class TerrainCache:
         for i, url in enumerate(OVERPASS_URLS):
             self._throttle()
             try:
-                resp = requests.post(url, data={"data": query}, headers=HEADERS, timeout=8)
+                resp = requests.post(url, data={"data": query}, headers=HEADERS, timeout=15)
                 if resp.status_code == 200:
                     return resp.json()
                 last_error = f"{url} -> HTTP {resp.status_code}: {resp.text[:150]}"

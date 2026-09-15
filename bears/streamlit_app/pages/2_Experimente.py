@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 
 import animation_component as anim
 import sync_simulation as sync
+from geojson_table_helper import geojson_to_dataframe
 
 st.set_page_config(page_title="Bewegungs-Animation", layout="wide")
 
@@ -191,3 +192,17 @@ else:
             source_label=source_label,
             height=900,
         )
+
+        st.markdown("### Daten zur aktuellen Ansicht")
+        _tabs = st.tabs(["Echte GPS-Punkte", "Alternativ-Kandidaten"])
+        with _tabs[0]:
+            df_real = geojson_to_dataframe(carpathian_data.get("points"))
+            st.caption(f"{len(df_real)} echte GPS-Punkte für {selected_bear_label}, {loaded_date_str}")
+            st.dataframe(df_real, width="stretch")
+        with _tabs[1]:
+            df_alt = geojson_to_dataframe(alt_geojson)
+            if df_alt.empty:
+                st.info("Keine Alternativ-Kandidaten berechnet.")
+            else:
+                st.caption(f"{len(df_alt)} Alternativ-Kandidaten (Fabians Modell)")
+                st.dataframe(df_alt, width="stretch")

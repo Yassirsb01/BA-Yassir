@@ -28,7 +28,7 @@ import japan_map_component as jm
 from geojson_table_helper import geojson_to_dataframe
 from japan_comparison import (
     load_japan_cameras, get_real_events_for_camera, simulate_multiple_bears_from_sighting,
-    DatabaseConnection, BearSpeeds, SIM_DB_PATH,
+    get_photo_counts_by_camera, DatabaseConnection, BearSpeeds, SIM_DB_PATH,
 )
 from wildlife_db_mariadb import WildlifeDatabase
 
@@ -40,6 +40,59 @@ st.caption(
     "Foto-Ereignis (Ort + Zeit) und bewegen sich nach dem rumänischen Modell. "
     "Rote Striche auf der Zeitleiste zeigen, wann an dieser Kamera tatsächlich fotografiert wurde."
 )
+
+# Erklaerung bewusst auf ENGLISCH - siehe gleichlautende Begruendung in
+# pages/2_Experimente.py.
+with st.expander("What am I looking at?  ·  About this experiment", expanded=False):
+    st.markdown("""
+**The idea.** Movement patterns learned from GPS-collared brown bears in the
+Romanian Carpathians are transferred to a camera-trap landscape in Japan
+(Fukushima region, Honshu), where no collar data exists. The question is
+whether simulated bears show up near cameras at times comparable to when real
+photographs were actually triggered.
+
+**Two very different kinds of data.** The Romanian data is tied to the
+*animal*: a collar reports where one known bear is, hour by hour. The Japanese
+data is tied to the *place*: a camera reports that some bear passed a fixed
+point at a given moment, with no identity and no track. The two cannot be
+compared directly — only through the timing and location of encounters.
+
+**What the colours mean.**
+
+| Element | Meaning |
+|---|---|
+| **Coloured** dots and trails | Simulated bears. All start from the same real photo event — same place, same timestamp — and then move independently. |
+| **Grey** dots | Camera locations. Click one for its device ID, coordinates and number of real photographs. |
+| **Yellow** flash | A camera lights up when a simulated bear comes within the detection radius. |
+| **Red** ticks on the timeline | Times at which a photograph was actually taken at the selected camera. |
+
+**What the animation shows.** Whether simulated bears approach cameras during
+the same hours of the day in which real photographs cluster.
+
+In this dataset the triggers are strongly nocturnal: 47 of 50 usable
+timestamps (94%) fall between 18:00 and 06:00. That concentration is itself an
+observation, not a given. Asian black bears are generally described in the
+literature as cathemeral — active during both day and night — so a near-absence
+of daytime triggers is something the data shows rather than something the
+species dictates. One plausible reading is avoidance of humans: these cameras
+are placed at human–wildlife conflict sites, where daytime activity carries a
+cost for the animal. With 50 timestamps the pattern is indicative, not
+established.
+
+**What it does not show.** Each coloured path is **one random realisation** of
+the model, not a prediction of where a bear went. Re-running with a different
+seed produces different paths. A single run proves nothing; the quantitative
+answer comes from the statistical comparison further down the page, which pools
+many runs across all cameras into an overlap coefficient with a confidence
+interval.
+
+**Known limitations.** The Japanese cameras lie in the range of the Asian black
+bear (*Ursus thibetanus*), while the model was trained on European brown bears
+(*Ursus arctos*) — a deliberate simplification, not an equivalence. The number
+of real photo timestamps is small, so results are indicative rather than
+conclusive. Terrain weighting, when enabled, uses OpenStreetMap land-use data
+with hand-set preferences, not coefficients fitted to observed habitat use.
+""")
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -58,21 +111,52 @@ def _get_real_events(device_id: str):
     return get_real_events_for_camera(db, device_id)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _get_photo_counts():
+    """Fotozahlen aller Kameras fuer die anklickbaren Kartenpunkte -
+    eine einzige Abfrage, gecacht (siehe get_photo_counts_by_camera)."""
+    return get_photo_counts_by_camera(WildlifeDatabase())
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _simulate(device_id: str, lat: float, lng: float, start_time_iso: str,
               n_bears: int, hours: int, use_terrain: bool, seed: int):
+    """
+    Returns:
+        (bears, terrain_warning) - terrain_warning ist "" im Normalfall bzw.
+        der Grund, warum ohne Gelaendegewichtung gerechnet wurde.
+
+    Die Gelaendegewichtung ist ein Komfortmerkmal: laesst sich der Cache
+    nicht oeffnen (beschaedigte oder ueberschriebene terrain_cache.db),
+    wird OHNE Gewichtung weitergerechnet statt die Seite abstuerzen zu
+    lassen. Der Grund wird nach oben gereicht und dort angezeigt.
+    """
     dbcon = DatabaseConnection(SIM_DB_PATH)
     bear_speeds = BearSpeeds(dbcon)
     terrain_cache = None
+    terrain_warning = ""
+
     if use_terrain:
-        from terrain_cache import TerrainCache
-        terrain_cache = TerrainCache()
+        try:
+            from terrain_cache import TerrainCache
+            terrain_cache = TerrainCache()
+            if getattr(terrain_cache, "disabled", False):
+                terrain_warning = terrain_cache.disabled_reason
+                terrain_cache = None
+        except Exception as e:
+            terrain_warning = (
+                f"Gelaende-Cache konnte nicht geoeffnet werden ({type(e).__name__}: {e}). "
+                "Simulation laeuft ohne Gelaendegewichtung."
+            )
+            terrain_cache = None
+
     start_time = datetime.fromisoformat(start_time_iso)
-    return simulate_multiple_bears_from_sighting(
+    bears = simulate_multiple_bears_from_sighting(
         start_lat=lat, start_lng=lng, start_time=start_time,
         n_bears=n_bears, duration_hours=hours, bear_speeds=bear_speeds,
         seed=seed, terrain_cache=terrain_cache,
     )
+    return bears, terrain_warning
 
 
 DURATION_OPTIONS = [
@@ -173,11 +257,19 @@ else:
     start_camera = {"device_id": cam_id, "lat": lat, "lng": lng}
 
     with st.spinner(f"Simuliere {n_bears} Bären ab Kamera {cam_id}..."):
-        bears = _simulate(cam_id, lat, lng, start_time_iso, n_bears, hours, use_terrain, seed)
+        bears, terrain_warning = _simulate(
+            cam_id, lat, lng, start_time_iso, n_bears, hours, use_terrain, seed
+        )
+
+    if terrain_warning:
+        st.warning(terrain_warning)
 
     jm.render_japan_map(
         cameras=cameras, start_camera=start_camera, bears=bears,
-        real_events=real_events, height=850,
+        # None (nicht {}) bei fehlender DB - siehe render_japan_map():
+        # {} hiesse "erreichbar, aber ueberall null Fotos".
+        real_events=real_events, photo_counts=_get_photo_counts() if db_ok else None,
+        height=850,
     )
 
     st.markdown("### Daten zur aktuellen Ansicht")

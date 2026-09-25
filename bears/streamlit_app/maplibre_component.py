@@ -12,8 +12,19 @@ import json
 import streamlit.components.v1 as components
 
 
-BASEMAP_NAMES = ["Liberty", "Bright", "Positron", "Dark", "OSM Raster",
-                 "Esri Satellite", "Esri Satellite + Beschriftung"]
+# Reihenfolge = Reihenfolge im Auswahlfeld. Satellit steht vorn, weil er
+# der Standard ist: fuer die Beurteilung von Baerenbewegungen zaehlt das
+# Gelaende (Wald, Lichtungen, Taeler), das auf einer Vektorkarte gar nicht
+# dargestellt wird. Die uebrigen Stile bleiben unveraendert waehlbar.
+DEFAULT_BASEMAP = "Esri Satellite"
+
+BASEMAP_NAMES = ["Esri Satellite", "Esri Satellite + Beschriftung",
+                 "Liberty", "Bright", "Positron", "Dark", "OSM Raster"]
+
+# Kostenfreie Hoehendaten ohne API-Schluessel (Quelle des offiziellen
+# MapLibre-3D-Terrain-Beispiels) - dieselbe wie in animation_component.py
+# und japan_map_component.py, damit sich alle drei Karten gleich verhalten.
+TERRAIN_TILEJSON = "https://tiles.mapterhorn.com/tilejson.json"
 
 
 def _build_styles():
@@ -83,7 +94,8 @@ def render_maplibre(
     simulation=None,
     wolf_lynx=None,
     gbif_bears=None,
-    basemap: str = "Liberty",
+    basemap: str = DEFAULT_BASEMAP,
+    terrain3d: bool = False,
     center=None,
     zoom: float = None,
     initial_visible: set = None,
@@ -120,7 +132,10 @@ def render_maplibre(
     if zoom is None:
         zoom = 2
     if basemap not in BASEMAP_NAMES:
-        basemap = "Liberty"
+        basemap = DEFAULT_BASEMAP
+
+    t3d_checked = " checked" if terrain3d else ""
+    t3d_js = "true" if terrain3d else "false"
 
     styles_js = json.dumps(_build_styles())
     refit_json = json.dumps(sorted(refit_on_load)) if refit_on_load else "[]"
@@ -213,6 +228,7 @@ def render_maplibre(
     .bm-label {{ font-size:12px; color:#555; display:block; margin-bottom:4px; }}
     #basemap-select {{ width:100%; padding:5px 6px; border-radius:6px;
                        border:1px solid #ccc; font-size:13px; background:#fff; cursor:pointer; }}
+    .terrain-note {{ font-size:11px; color:#b4553c; line-height:1.4; display:none; }}
 
     .draw-panel {{ top:10px; right:10px; left:auto; min-width:220px; }}
     .draw-mode-row {{ display:flex; gap:6px; margin-bottom:8px; }}
@@ -238,6 +254,8 @@ def render_maplibre(
     <div class="sep"></div>
     <label class="bm-label">Kartenstil</label>
     <select id="basemap-select">{bm_options}</select>
+    <label><input type="checkbox" id="toggle-3d"{t3d_checked} /> 3D-Gelände</label>
+    <div class="terrain-note" id="terrain-note">Höhendaten nicht erreichbar – Karte bleibt in 2D.</div>
   </div>
 
   <div class="panel draw-panel">
@@ -286,13 +304,18 @@ def render_maplibre(
                      fcs:[DATA.gbif_bears] }}
     }};
 
+    const TERRAIN_TILEJSON = "{TERRAIN_TILEJSON}";
+
     const map = new maplibregl.Map({{
       container: 'map',
       style: STYLES["{basemap}"],
       center: [{center_lng}, {center_lat}],
-      zoom: {zoom}
+      zoom: {zoom},
+      maxPitch: 85   // ohne das laesst sich die Kamera nicht in die 3D-Schraege neigen
     }});
-    map.addControl(new maplibregl.NavigationControl(), 'top-right');
+    // visualizePitch zeigt die Neigung im Kompass - im 3D-Modus sonst schwer
+    // zu erkennen, in welcher Schraege man gerade steht.
+    map.addControl(new maplibregl.NavigationControl({{ visualizePitch:true }}), 'top-right');
 
     // -------------------------------------------------------
     // Zustand (Center/Zoom/Basemap/sichtbare Layer) in die URL des
@@ -321,6 +344,7 @@ def render_maplibre(
         params.set('m_lng', c.lng.toFixed(5));
         params.set('m_zoom', map.getZoom().toFixed(2));
         params.set('m_style', currentStyleName);
+        params.set('m_3d', terrain3d ? '1' : '0');
 
         const visible = Object.keys(GROUPS).filter(k => {{
           const cb = document.getElementById(GROUPS[k].id);
@@ -357,6 +381,46 @@ def render_maplibre(
       map.addLayer(spec, firstSymbolLayerId());  // immer VOR Labels
     }}
 
+    // -------------------------------------------------------
+    // 3D-Gelaende (uebernommen aus animation_component.py - gleiche
+    // Bedienung und gleiches Fehlerverhalten: sind die Hoehendaten nicht
+    // erreichbar, bleibt die Karte in 2D voll nutzbar, der Schalter springt
+    // zurueck und es erscheint ein Hinweis statt eines Fehlers.)
+    // -------------------------------------------------------
+    let terrain3d = {t3d_js};
+
+    function applyTerrain(on) {{
+      try {{
+        if (map.getLayer('hillshade')) {{
+          map.setLayoutProperty('hillshade','visibility', on ? 'visible' : 'none');
+        }}
+        if (on) {{
+          if (map.getSource('terrain-dem')) map.setTerrain({{ source:'terrain-dem', exaggeration:1.4 }});
+          map.easeTo({{ pitch:62, duration:700 }});
+        }} else {{
+          map.setTerrain(null);
+          map.easeTo({{ pitch:0, duration:500 }});
+        }}
+      }} catch (e) {{
+        console.warn('Terrain konnte nicht gesetzt werden:', e);
+        showTerrainNote();
+      }}
+    }}
+
+    function showTerrainNote() {{
+      const n = document.getElementById('terrain-note');
+      if (n) n.style.display = 'block';
+      const cb = document.getElementById('toggle-3d');
+      if (cb) cb.checked = false;
+      terrain3d = false;
+    }}
+
+    // Fehlende Hoehen-Kacheln melden, ohne die Karte zu blockieren
+    map.on('error', (e) => {{
+      const msg = (e && e.error && e.error.message) || '';
+      if (terrain3d && /terrain|dem|mapterhorn/i.test(msg)) showTerrainNote();
+    }});
+
     function setVis(ids, vis) {{
       ids.forEach(id => {{
         if (map.getLayer(id))
@@ -369,6 +433,26 @@ def render_maplibre(
     // -------------------------------------------------------
     function addSourcesAndLayers() {{
       const addSrc = (id, d) => {{ if (!map.getSource(id)) map.addSource(id, {{ type:'geojson', data:d }}); }};
+
+      // Hoehenmodell + Schummerung: macht Hangrichtung und Gelaendeform
+      // sichtbar, was im reinen Luftbild oft schwer zu erkennen ist. Die
+      // Schummerung wird zusammen mit 3D ein-/ausgeschaltet und ganz unten
+      // eingehaengt, damit alle Datenebenen darueber lesbar bleiben.
+      if (!map.getSource('terrain-dem')) {{
+        try {{ map.addSource('terrain-dem', {{ type:'raster-dem', url:TERRAIN_TILEJSON }}); }}
+        catch (e) {{ console.warn('Terrain-Quelle nicht verfuegbar:', e); }}
+      }}
+      // addLayerSafe haengt vor dem ersten Symbol-Layer ein. Weil die
+      // Schummerung VOR allen Datenebenen angelegt wird und diese danach an
+      // derselben Stelle eingefuegt werden, landen sie automatisch darueber.
+      // Bei Rasterstilen (Satellit) gibt es keine Symbol-Layer -> die
+      // Schummerung wird schlicht auf das Luftbild gelegt.
+      if (map.getSource('terrain-dem')) {{
+        addLayerSafe({{ id:'hillshade', type:'hillshade', source:'terrain-dem',
+          layout:{{ visibility:'none' }},
+          paint:{{ 'hillshade-exaggeration':0.45, 'hillshade-shadow-color':'#3b3226' }} }});
+      }}
+
       addSrc('jp_deterrents', DATA.jp_deterrents);
       addSrc('jp_markers',    DATA.jp_markers);
       addSrc('jp_polygons',   DATA.jp_polygons);
@@ -738,7 +822,17 @@ def render_maplibre(
         map.once('style.load', () => {{
           addSourcesAndLayers();
           applyVisibilityFromCheckboxes();
+          // Nach einem Stilwechsel sind Terrain und Schummerung weg -
+          // war 3D aktiv, hier wieder setzen.
+          if (terrain3d) applyTerrain(true);
         }});
+        saveStateToUrl();
+      }});
+
+      const t3d = document.getElementById('toggle-3d');
+      if (t3d) t3d.addEventListener('change', e => {{
+        terrain3d = e.target.checked;
+        applyTerrain(terrain3d);
         saveStateToUrl();
       }});
 
@@ -751,6 +845,7 @@ def render_maplibre(
     map.on('load', () => {{
       addSourcesAndLayers();
       applyVisibilityFromCheckboxes();
+      if (terrain3d) applyTerrain(true);   // Zustand aus der URL wiederherstellen
       wirePopups();
       wireControls();
       wireDrawingControls();

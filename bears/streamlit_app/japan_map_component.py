@@ -15,6 +15,14 @@ Simulation hat kein natuerliches Ende, deshalb nur feste Fenster
 Bewusst auf derselben, bereits mehrfach getesteten Grundlogik wie
 animation_component.py aufgebaut (parseTime, Interpolation, Play/Pause/
 Step/Scrub) - erweitert um mehrere gleichzeitige Baeren-Tracks statt einem.
+
+3D-Gelaende: gleiche Bedienung und gleiches Fehlerverhalten wie in
+animation_component.py (Hoehenmodell + Schummerung + Kameraneigung, per
+Schalter, bei Nichterreichbarkeit bleibt die Karte in 2D nutzbar). Hier
+inhaltlich sogar wichtiger als bei den Carpathian-Daten: die Kameras der
+Fukushima-Region stehen in stark reliefiertem Gelaende, und ob ein
+simulierter Baer einen Hang quert oder einem Tal folgt, ist in der flachen
+Draufsicht nicht zu erkennen.
 """
 
 import json
@@ -34,6 +42,11 @@ BASEMAP_STYLES = {
     "Positron": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
     "Liberty": "https://tiles.openfreemap.org/styles/liberty",
 }
+
+# Kostenfreie Hoehendaten ohne API-Schluessel (Quelle des offiziellen
+# MapLibre-3D-Terrain-Beispiels) - dieselbe Quelle wie in
+# animation_component.py, damit beide Karten identisch funktionieren.
+TERRAIN_TILEJSON = "https://tiles.mapterhorn.com/tilejson.json"
 
 # Unterscheidbare Farben fuer bis zu 20 gleichzeitige Baeren (zyklisch wiederverwendet)
 BEAR_COLORS = [
@@ -64,6 +77,7 @@ def render_japan_map(
     real_events: list,
     basemap: str = "Satellit",
     detection_radius_m: float = 100,
+    photo_counts: dict | None = None,
     height: int = 850,
 ):
     """
@@ -76,11 +90,40 @@ def render_japan_map(
         real_events: Liste von datetime - echte Fotozeiten AN DER
             Startkamera (aus get_real_events_for_camera()), fuer die
             Zeitleisten-Markierungen.
+        photo_counts: {device_id: anzahl echter Fotos} aus
+            japan_comparison.get_photo_counts_by_camera(), oder None, wenn
+            die Datenbank nicht erreichbar war.
+
+            WICHTIG - None und {} bedeuten NICHT dasselbe:
+            None  = Fotozahlen unbekannt (keine DB-Verbindung)
+            {}    = DB erreichbar, aber an keiner Kamera Fotos
+            Ein FEHLENDER Schluessel bei erreichbarer DB bedeutet
+            ebenfalls "null Fotos" und nicht "unbekannt" - die
+            zugrundeliegende Abfrage gruppiert nach device_id und liefert
+            Kameras ohne Aufnahmen schlicht nicht mit. Genau diese
+            Unterscheidung fehlte zuerst, wodurch 10 von 20 Kameras trotz
+            bestehender Verbindung "keine DB-Verbindung" gemeldet haben.
     """
+    counts_known = photo_counts is not None
+    photo_counts = photo_counts or {}
+    start_id = str(start_camera.get("device_id", ""))
+
+    # Die Fotozahl wandert als Feature-Property mit, damit das Popup sie
+    # ohne zweite Datenquelle anzeigen kann. -1 heisst ausschliesslich
+    # "unbekannt, weil keine DB-Verbindung"; 0 heisst "nachweislich keine
+    # Fotos an dieser Kamera".
     cameras_geojson = {
         "type": "FeatureCollection",
         "features": [
-            {"type": "Feature", "properties": {"device_id": c.get("device_id", "?")},
+            {"type": "Feature",
+             "properties": {
+                 "device_id": c.get("device_id", "?"),
+                 "lat": round(float(c["lat"]), 5),
+                 "lng": round(float(c["lng"]), 5),
+                 "photos": int(photo_counts.get(str(c.get("device_id")), 0))
+                           if counts_known else -1,
+                 "is_start": str(c.get("device_id")) == start_id,
+             },
              "geometry": {"type": "Point", "coordinates": [c["lng"], c["lat"]]}}
             for c in cameras
         ],
@@ -145,6 +188,21 @@ def render_japan_map(
     .hr {{ height:1px; background:var(--line); margin:10px 0; }}
     .section-label {{ font-size:10px; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:5px; }}
     #basemap-select {{ width:100%; font-size:12px; padding:6px 8px; border-radius:8px; border:1px solid var(--line-strong); background:#fff; }}
+    .switch-row {{ display:flex; align-items:center; gap:8px; margin-top:9px; font-size:11.5px; color:var(--ink-soft); cursor:pointer; }}
+    .switch-row input {{ accent-color:#1d6fb8; cursor:pointer; }}
+    .terrain-note {{ font-size:10px; color:#b4553c; margin-top:6px; line-height:1.4; display:none; }}
+
+    /* Kamera-Popup */
+    .pop {{ font-family:'IBM Plex Sans',system-ui,sans-serif; color:var(--ink); }}
+    .pop-title {{ font-weight:600; font-size:12.5px; margin-bottom:5px; }}
+    .pop-row {{ font-size:11.5px; color:var(--ink-soft); margin-top:3px; }}
+    .pop-mono {{ font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--ink-faint); }}
+    .pop-muted {{ color:var(--ink-faint); font-style:italic; }}
+    .pop-badge {{ display:inline-block; font-size:10px; padding:2px 6px; border-radius:5px;
+                  background:rgba(255,203,61,.25); border:1px solid rgba(180,140,20,.35);
+                  color:#7a5c05; margin-bottom:4px; }}
+    .maplibregl-popup-content {{ padding:10px 12px; border-radius:10px;
+                                 box-shadow:0 6px 24px rgba(20,18,15,.18); }}
 
     .log-panel {{ position:absolute; top:16px; right:16px; width:230px; max-height:340px;
                   padding:12px 13px; z-index:3; display:flex; flex-direction:column; }}
@@ -205,6 +263,9 @@ def render_japan_map(
       <div class="hr"></div>
       <div class="section-label">Kartenstil</div>
       <select id="basemap-select">{bm_options}</select>
+
+      <label class="switch-row"><input type="checkbox" id="toggle-3d" /> 3D-Gelände (Höhenmodell)</label>
+      <div class="terrain-note" id="terrain-note">Höhendaten nicht erreichbar – Karte bleibt in 2D.</div>
     </div>
 
     <div class="log-panel glass">
@@ -260,11 +321,16 @@ def render_japan_map(
 
     const startCamCoords = [{start_camera["lng"]}, {start_camera["lat"]}];
 
+    const TERRAIN_TILEJSON = "{TERRAIN_TILEJSON}";
+
     const map = new maplibregl.Map({{
       container:'map', style:STYLES["{basemap}"], center:startCamCoords, zoom:13,
+      maxPitch:85,   // ohne das laesst sich die Kamera nicht in die 3D-Schraege neigen
       attributionControl:false,
     }});
-    map.addControl(new maplibregl.NavigationControl(), 'top-right');
+    // visualizePitch zeigt die Neigung im Kompass an - im 3D-Modus sonst
+    // schwer zu erkennen, in welcher Schraege man gerade steht.
+    map.addControl(new maplibregl.NavigationControl({{ visualizePitch:true }}), 'top-right');
     map.addControl(new maplibregl.ScaleControl({{maxWidth:110, unit:'metric'}}), 'bottom-right');
 
     // -------------------------------------------------------
@@ -273,6 +339,21 @@ def render_japan_map(
     function addSourcesAndLayers() {{
       const addSrc = (id, d) => {{ if (!map.getSource(id)) map.addSource(id, {{type:'geojson', data:d}}); }};
       const addLayerSafe = (spec) => {{ if (!map.getLayer(spec.id)) map.addLayer(spec); }};
+
+      if (!map.getSource('terrain-dem')) {{
+        try {{ map.addSource('terrain-dem', {{ type:'raster-dem', url:TERRAIN_TILEJSON }}); }}
+        catch (e) {{ console.warn('Terrain-Quelle nicht verfuegbar:', e); }}
+      }}
+
+      // Schummerung (nutzt dasselbe Hoehenmodell wie der 3D-Modus): macht
+      // Hangrichtung und Gelaendeform sichtbar. Wird zusammen mit 3D
+      // ein-/ausgeschaltet und liegt UNTER allen Datenebenen, damit
+      // Kameras und Baerenpfade lesbar bleiben.
+      if (map.getSource('terrain-dem')) {{
+        addLayerSafe({{ id:'hillshade', type:'hillshade', source:'terrain-dem',
+          layout:{{ visibility:'none' }},
+          paint:{{ 'hillshade-exaggeration':0.45, 'hillshade-shadow-color':'#3b3226' }} }});
+      }}
 
       addSrc('cameras', DATA.cameras);
       addLayerSafe({{ id:'cameras-halo', type:'circle', source:'cameras',
@@ -293,6 +374,98 @@ def render_japan_map(
         addLayerSafe({{ id:'marker-'+i, type:'circle', source:'marker-'+i,
           paint:{{'circle-radius':6, 'circle-color':bt.color, 'circle-stroke-width':2, 'circle-stroke-color':'#fff'}} }});
       }});
+
+      // Nach einem Kartenstil-Wechsel sind Terrain und Schummerung weg -
+      // war 3D aktiv, muss es hier wieder gesetzt werden.
+      if (uiState.terrain3d) applyTerrain(true);
+    }}
+
+    // -------------------------------------------------------
+    // 3D-Gelaende (uebernommen aus animation_component.py, gleiche
+    // Bedienung und gleiches Fehlerverhalten: schlaegt das Laden der
+    // Hoehendaten fehl, bleibt die Karte in 2D voll nutzbar und der
+    // Schalter springt mit einem Hinweis zurueck)
+    // -------------------------------------------------------
+    const uiState = {{ terrain3d:false }};
+
+    function applyTerrain(on) {{
+      try {{
+        if (map.getLayer('hillshade')) {{
+          map.setLayoutProperty('hillshade','visibility', on ? 'visible' : 'none');
+        }}
+        if (on) {{
+          if (map.getSource('terrain-dem')) map.setTerrain({{ source:'terrain-dem', exaggeration:1.4 }});
+          map.easeTo({{ pitch:62, duration:700 }});
+        }} else {{
+          map.setTerrain(null);
+          map.easeTo({{ pitch:0, duration:500 }});
+        }}
+      }} catch (e) {{
+        console.warn('Terrain konnte nicht gesetzt werden:', e);
+        showTerrainNote();
+      }}
+    }}
+
+    function showTerrainNote() {{
+      const n = document.getElementById('terrain-note');
+      if (n) n.style.display = 'block';
+      const cb = document.getElementById('toggle-3d');
+      if (cb) cb.checked = false;
+      uiState.terrain3d = false;
+    }}
+
+    // Fehlende Hoehen-Kacheln melden, ohne die Karte zu blockieren
+    map.on('error', (e) => {{
+      const msg = (e && e.error && e.error.message) || '';
+      if (uiState.terrain3d && /terrain|dem|mapterhorn/i.test(msg)) showTerrainNote();
+    }});
+
+    // -------------------------------------------------------
+    // Kamera-Popups
+    //
+    // Bewusst Popup statt Dauerbeschriftung: Bei 20 Kameras, die teils nur
+    // wenige hundert Meter auseinander liegen, ueberlappen sich dauerhafte
+    // Labels im herausgezoomten Zustand und verdecken genau die Baerenpfade,
+    // um die es geht. Beim Aufleuchten waehrend der Animation genuegt ein
+    // Klick, um zu sehen, welche Kamera gerade getroffen wurde.
+    // -------------------------------------------------------
+    function wireCameraPopups() {{
+      map.on('click', 'cameras', (e) => {{
+        const f = e.features && e.features[0];
+        if (!f) return;
+        const p = f.properties || {{}};
+
+        // Drei Faelle bewusst unterschieden: unbekannt (-1, keine
+        // DB-Verbindung), nachweislich keine Fotos (0) und eine echte Anzahl.
+        const nPhotos = Number(p.photos);
+        let photoLine;
+        if (nPhotos < 0) {{
+          photoLine = '<div class="pop-row pop-muted">Fotoanzahl unbekannt (keine DB-Verbindung)</div>';
+        }} else if (nPhotos === 0) {{
+          photoLine = '<div class="pop-row pop-muted">Keine Fotos an dieser Kamera</div>';
+        }} else {{
+          photoLine = '<div class="pop-row"><b>' + nPhotos + '</b> echte Foto(s) an dieser Kamera</div>';
+        }}
+
+        const startLine = (p.is_start === true || p.is_start === 'true')
+          ? '<div class="pop-badge">Startkamera dieser Simulation</div>' : '';
+
+        new maplibregl.Popup({{ offset: 12, closeButton: true, maxWidth: '260px' }})
+          .setLngLat(f.geometry.coordinates)
+          .setHTML(
+            '<div class="pop">' +
+              '<div class="pop-title">Kamera ' + (p.device_id || '?') + '</div>' +
+              startLine +
+              '<div class="pop-row pop-mono">' + p.lat + ', ' + p.lng + '</div>' +
+              photoLine +
+            '</div>'
+          )
+          .addTo(map);
+      }});
+
+      // Zeigefinger, damit erkennbar ist, dass die Punkte anklickbar sind
+      map.on('mouseenter', 'cameras', () => {{ map.getCanvas().style.cursor = 'pointer'; }});
+      map.on('mouseleave', 'cameras', () => {{ map.getCanvas().style.cursor = ''; }});
     }}
 
     function fitToData() {{
@@ -313,6 +486,12 @@ def render_japan_map(
       if (sel) sel.addEventListener('change', e => {{
         map.setStyle(STYLES[e.target.value], {{diff:false}});
         map.once('style.load', () => {{ addSourcesAndLayers(); renderFrame(); }});
+      }});
+
+      const t3d = document.getElementById('toggle-3d');
+      if (t3d) t3d.addEventListener('change', e => {{
+        uiState.terrain3d = e.target.checked;
+        applyTerrain(uiState.terrain3d);
       }});
     }}
 
@@ -565,6 +744,7 @@ def render_japan_map(
       addSourcesAndLayers();
       fitToData();
       wireBasemapControl();
+      wireCameraPopups();   // haengt an der Karte, nicht am Layer -> ueberlebt Stilwechsel
       wireControls();
       initAnimation();
     }});

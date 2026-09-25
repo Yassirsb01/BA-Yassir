@@ -1,0 +1,851 @@
+Human Step Movement Imitation
+For Training Privacy-Aware Intelligent Environments
+Johannes Geyer 1, Matthias Melzer 2, Jan D ¨unnweber2
+Ostbayerische Technische Hochschule Regensburg
+Faculty of Computer Science and Mathematics
+Regensburg, Germany
+1firstName.lastName@st.oth-regensburg.de
+2firstName.lastName@oth-regensburg.de
+Amitrajit Sarkar
+Ara Institute of Canterbury
+Christchurch, New Zealand
+amit.sarkar@ara.ac.nz
+Abstract—Movement sensors are used, e.g., for automated
+lighting or for HV AC automation. Depending on the type of
+sensor (ultrasonic, radar, etc.), not only the presence but also the
+number of people in a building can be determined. ML models
+trained with movement data can support the interpretation of local
+movement patterns:Situated intelligencemeans putting elementary
+data, such as step sensor measurements, together and learning
+bottom-up which movement patterns may indicate processes such
+as crowd formation or hurried motion. Such dynamic inference
+mechanisms are useful in guidance systems for key public venues,
+including shopping malls or tourist attractions. Compared to
+video-based automation, situated AI is more adaptable and can
+also be used where filming is not allowed due to privacy. In
+this work, we discuss privacy-aware tracking for environments
+using floor sensors and training data we built synthetically, but
+realistically, by imitating human musculoskeletal biomechanics.
+For two feasibility case studies, one in a grocery store and one
+on a city bus, we explain how we track unidentified people and
+derive limited behavioral indicators only from foot movements in
+a narrow area that we covered with a sensor map.
+Index Terms—intelligent environments; smart retail; building
+automation; smart transportation; situated intelligence
+I. INTRODUCTION
+Most people will agree that it is a good idea to align the
+schedules and routes of buses and the placement of new bus
+stops, taking into account the actual needs of passengers.
+However, for city councils, it is not trivial to determine
+where and when travelers would like to have a new stop.
+Therefore, the planning of new routes is typically based on
+map partitioning and demographic data such as the size of the
+working population in an area [1]. Crowding around the bus
+entrance or other dynamic data, such as average travel times, is
+generally ignored since this information is not acquired when
+only ticket sales data are collected. Therefore, no detailed
+passenger behavior analysis is conducted, although it could
+substantially improve the planning of bus routes [2].
+Grocery store management strategies also depend on un-
+derstanding customers’ needs. If store operators knew what
+customers were likely to buy next, they could develop a
+more forward-looking and economically effective inventory
+management strategy. At the same time, they could run a more
+sustainable business that avoids food waste.
+Using sales data for different goods and visitor data for
+different departments of a store, AI models can be trained to
+make useful predictions for sustainable inventory management
+strategies, which customers are likely to support [3].
+However, most people will probably not agree with being
+filmed on a bus or in a store to create training data for an AI,
+regardless of the potential benefits to environmental protection
+or urban mobility. In particular, the recording of video material
+showing individuals and the digital post-processing of such
+material is generally refused or even prohibited by law in some
+places [4]. Therefore, tracking the behavior of people in public
+places like buses is typically done by conducting surveys on
+site [2]. One of the reasons why the results of such surveys are
+unreliable is that many relevant groups do not participate at all.
+These groups include people who are in a rush or people who
+are dissatisfied and could name weaknesses that need to be
+addressed. In statistics, this problem is known as the coverage
+error, which has already been studied for a long time with the
+aim of conducting more reliable surveys [5].
+As an alternative to filming or collecting questionnaires, we
+describe an approach for detecting and characterizing local
+movement patterns without identifying individuals or intruding
+on their privacy. To overcome the problems with unavailable
+and/or sensitive data resulting from human behavior, we trained
+an AI model to perform a floor-sensor-based gait analysis. The
+footstep placement data which any person leaves unintentionally
+wherever she or he is walking are not data in need of protection.
+These data can be recorded in public places and processed
+electronically without the need for asking the originator. The
+data is verifiable, observed people remain anonymous and the
+local tracking data allows for deriving meaningful behavioral
+indicators, as explored in our experiments.
+We raise the following three research questions (RQ):
+RQ1: How reliably can Machine Learning (ML) detect foot-
+steps from the data collected by floor sensor mats and
+assign the movement events to individuals?
+RQ2: Can we generate useful synthetic data for training
+our model that recognizes people on sensor mats by
+simulating human biomechanics?
+RQ3: What installation and operational factors influence the
+precision and reliability of such systems?
+2026 22nd International Conference on Intelligent Environments (IE) | 979-8-3315-6450-6/26/$31.00 ©2026 IEEE | DOI: 10.1109/IE69249.2026.11539056
+Authorized licensed use limited to: Ostbayerische Technische Hochschule Regensburg. Downloaded on September 25,2026 at 09:21:56 UTC from IEEE Xplore.  Restrictions apply. Concerning RQ1, we present a tracking pipeline that connects
+sensor mat measurements of a person’s feet uniquely to a person
+using instance segmentation. Concerning RQ2, we describe our
+musculoskeletal simulation of human biomechanics and how
+we integrated it into standard software (Unity → Blender →
+Motion Capture) to generate step activation patterns. Regarding
+RQ3, we report on our case studies in a bus and in a shop. We
+report instance-level recognition metrics for our data samples
+and show how analyzing movement indicators, such as length
+of stay and peaks, can support planning-related insights.
+For a comparison with computer-supported video surveil-
+lance, we describe a reference experiment on customer obser-
+vation in a mall in New Zealand where public video recording
+is allowed [6]. In a follow-up experiment, we installed floor
+sensor mats in a German grocery store. In both experiments,
+the floor sensors provided more fine-grained local movement
+information where customers were counted. However, the
+customer movements could not be analyzed at the same level of
+detail. We conducted another experiment in a city bus, where
+we also installed our floor sensor mats. The recorded timing
+and movement data provided a clear understanding of where
+and when the bus was empty or overcrowded.
+As a preparation procedure for the sensor experiments, we
+recorded ourselves walking across the sensor mats in the
+case study environment. By combining the recorded data
+with simulation data, we could train a reliable AI model,
+although the recorded movement data, originating from two
+of the authors, was limited and most input was generated
+by imitating human movements. Imitated human movements
+are also used for making avatars look realistic in interactive
+educational software or computer games [7]. It has also been
+shown that prompt reactions to human movements lead to safer
+interactions between people and robots [8]. However, step
+pattern imitation for privacy-aware local movement analysis
+in urban environments has not yet been comprehensively
+investigated elsewhere.
+To address concerns regarding data collection and generation
+in relation to data protection and ethics, we emphasize that all
+data we collected are subject to the European Union’s General
+Data Protection Regulation (GDPR) and New Zealand’s Privacy
+Act 2020. All common legislative and ethical guidelines,
+including those of the participating universities, have been
+observed and complied with. Using the data, we perform a
+statistical analysis and explain what the measurements tell us
+about the observed movement patterns.
+The remainder of this paper is structured as follows. In
+Section II, we discuss other work on interpreting behavioral
+processes based on event tracking. Section III shows how
+our neural network can interpret footstep events after we
+trained it with data that are synthetic but not random: using a
+biomechanical simulation to obtain realistic training data is the
+central methodological contribution of this work. In Section IV,
+we evaluate this idea in our experiments and compare the results
+from automated tracking with hand-annotated datasets.
+II. RELATEDWORK
+Process miningis a branch of data science related to the
+work we present, as it is also focused on behavioral data [9].
+One problem of ERP systems, as they are often used in business
+analysis and economic process mining, is that the captured
+data is too coarse-grained for the computer-based detection
+of behavioral patterns. One reason for gaps in the data is
+that many systems retrieve data usingpull-methods importing
+measurements on demand. Our floor sensors produce small
+data packets, which can be allpushedto our backend, leading
+to a more reliable measurement interpretation [10].
+Alternatives to floor sensors that are sometimes used in
+warehouses for monitoring employees are shelf sensors and
+wearable devices, such as electronic wristbands [11]. While
+process mining can benefit from the combination of multiple
+data sources, maintaining situational awareness across an
+organization becomes more difficult with the number of systems
+involved [12].
+Process mining systems for manufacturing, such as the ones
+described above, deal with processes that have an outcome
+allowing for the insertion of labels into the recorded timeline
+whenever a product is finished. Similarly, recorded dialog
+allows for the insertion of labels corresponding to the dialog
+topics [13]. Finding appropriate labels for footstep recordings
+at consecutive process states is more intricate. However, our
+work is not aimed at the reduction of processing steps or at
+understanding people’s opinions concerning a topic, but rather
+at making beneficial adjustments to the environment which can
+be done without labeling the observed processes.
+Other work on improving urban living via automation focuses
+on environmental characteristics and static conditions, such
+as the proportion of green space in an area, which can be
+captured electronically from photos without the need to track
+motions [14]. In another case study that used motion tracking,
+397 test participants had to agree with the installation of a
+tracking app on their personal smartphones. The goal was ro
+predict when one of these persons would leave a store or visit
+the next one [15].
+Fig. 1. The neural network is trained on synthetic data and produces instance
+masks. Masks are converted to feet positions using a weighted mean.
+Authorized licensed use limited to: Ostbayerische Technische Hochschule Regensburg. Downloaded on September 25,2026 at 09:21:56 UTC from IEEE Xplore.  Restrictions apply. To track the behavior of groups of people, another case
+study combined smartphone-based trajectory identification with
+the use oflight detection and rangingsensors (LiDAR) [16].
+LiDAR sensors enable continuous data collection and may raise
+fewer privacy concerns than camera-based tracking, similar to
+our floor sensors. However, the combination of path analysis
+and LiDAR is quite complex: To assess crowd density, the
+authors had to combine the data from the smartphones’ inertial
+sensors (accelerometers and gyroscopes) with measurements
+from multi-laser installations (15-20 LiDAR sensors). Other
+approaches to detecting and tracking people use WiFi bea-
+cons [17], Bluetooth Low Energy (BLE), or RFID beacons [18].
+Similar to the worker-wristband study we discussed above,
+all participating persons must carry some kind of transponder
+device, which is not feasible outside industrial scenarios. These
+sensing modalities are relevant alternatives for privacy-aware
+tracking; however, an empirical comparison between footstep
+analysis and tracking people carrying transponders is beyond
+the scope of the case study presented in this work.
+An AI model for anonymous foot localization and local
+tracking, as presented in this paper, was not used in the studies
+discussed above, which use various sensors and/or cameras
+in combination. We only use floor sensors and our AI model
+ignores identities, i.e., we focus on anonymous local movement
+patterns instead of recognizing who is being tracked, in contrast
+to other work that uses AI in gait analysis for recognizing
+individuals [19].
+III. METHODS: PRECISE PEOPLE LOCALIZATION ON FLOOR
+SENSING MATS
+Our method for detecting the position of people on floor
+sensor mats is based on the application of AI models from
+image processing to the data matrices of the floor sensor mats.
+The basic principle, in image processing and in our application
+as well, is the arrangement of the sensitive areas in a matrix
+of rectangles. This matrix is comparable to the pixels of a two-
+dimensional bitmap image. To further increase the trigger rate,
+the sensitive rectangular areas are divided alternately along
+the diagonals and anti-diagonals. This results in a special data
+map in which each coordinate pair corresponds to two data
+Fig. 2. The motion capture files are linked to cuboid meshes representing feet.
+Their intersections with the floor are used for generating synthetic sensor data.
+values: either a measurement at the bottom left and top right
+or a measurement at the bottom right and top left.
+The processing of data from adjacent patches works segment-
+by-segment, regardless of the shape of the single patches (or
+the sensor matrices they contain) which can be triangular (as
+in our case) or, for example, rhombic.
+The only requirement is that all shapes are polygonal and
+do not overlap, as the neighborhood relationship must be
+clearly defined. The resulting data are used to train aninstance
+segmentation networkthat can estimate the position of a
+person’s feet walking across the floor sensors by analyzing
+the pattern generated on the sensor mat from multiple sensors.
+Using the segmentation masks generated by the network, a
+weighted average is calculated to estimate the positions of a
+person’s feet, labeled F1 and F2 in Figure 1.
+Regarding the design of the sensor mats, it should be noted
+that it is possible and common practice to adapt them to
+the floor layout without a loss of functionality [20]. In our
+experiments, we used the floor sensor system “SensFloor,”
+which is primarily used in German hospitals for accident
+detection.
+The following subsection III-A explains the process of
+generating synthetic data in more detail and justifies our choices
+of software technology. The implementation of the instance
+segmentation network and the algorithm for calculating the
+weighted mean value are discussed in more detail in the
+following subsection III-B.
+Fig. 3. Five simulated humans, with biomechanics modeled accordingly to
+motion capture files, create gait pattern data by walking in random directions.
+A. Realistic Generation of Synthetic Data
+In our synthetic data generation procedure, the setting of
+foot positions is based on a 3D simulation of walking humans
+triggering signals on simulated SensFloor patches. We modeled
+the former inUnity, due to the flexibility of this software with
+respect to input and output data 1. Our patches are described
+using the so-calledAsset Bundlesin theUnity Editor. We divide
+3D patch models into eight triangles per patch and export the
+position data to the simulation softwareBlender 2, where we
+run the movement simulation. Blender dynamically finds the
+regions where objects intersect, as required for locating the
+footsteps.
+1Unity Technologies: Unity (2023), https://unity.com, game development
+platform
+2Blender - a 3D modeling and rendering package. Blender Foundation,
+Stichting Blender Foundation, Amsterdam (2018), https://www.blender.org
+Authorized licensed use limited to: Ostbayerische Technische Hochschule Regensburg. Downloaded on September 25,2026 at 09:21:56 UTC from IEEE Xplore.  Restrictions apply. Running simulations is also supported by popularGoogle
+Sketchupsoftware, but only thePro Versionoffers anobject
+intersection function(under paid subscription [21]). In the free
+Blender software, where we process our topological data, we
+could also importmotion capture files, which are publicly
+available and document various human motion styles, e.g.,
+walking and running [22].
+As an alternative to the recorded data, we also considered us-
+ing a physics-based model, such as thelinear inverted pendulum
+(LIP). LIP was originally developed to move biped robots [23]
+and allows for the introduction of cost functions and their
+optimization toward more energy-efficient movements [24],
+which is not relevant to us. One reason why many other
+studies on footstep simulation are based on physics is that
+regular movements are required. Recognizing the differences
+between these and human movements is helpful in identifying
+abnormalities that indicate pathological conditions [25], which
+is also not relevant to our work.
+Comparisons between recorded and calculated movement
+data are common in medical big data analyses and often take
+into account, in addition to foot movements, detailed muscle
+action recordings, e.g., surface electromyography (EMG) [26].
+Unlike a clinical study of human movements, our model
+requires only pixel-by-pixel masks as training data. The
+instance masks that represent our floor indicate pixel-by-pixel
+where sensor activations occur, similar to the description of
+moving objects, their edges, and contours in raster image
+processing. [27].
+As shown in Figure 2, we link the motion capture data
+to cuboid meshes, which we use for to represent the feet of
+walking people - the reason for modeling ”brick-shaped” feet is
+that Unity must store a mesh for every object used in Blender
+for calculating collision events. The patterns left by people
+walking over the sensors on the floor predominantly depend
+on the way their feet are placed relative to our triangular
+sensors. For example, a single foot can activate only the two
+top triangles of a patch when placed on the upper part. However,
+it can potentially activate up to eight triangles, which occurs
+when it is placed in the center of a patch. In the simulation,
+it is necessary to ensure a good variety of foot placements in
+relation to the sensors. Therefore, we randomly alter the starting
+position and orientation of the simulated humans every time
+we spawn another thread to simulate a new human instance in
+our walking simulation. An example simulation iteration can
+be seen in Figure 3, where five simulated humans walk across
+a grid of 10×10 floor patches and trigger different activation
+patterns.
+Thus, our algorithm for creating simulated humans with
+their starting position and orientation performs the following
+steps: First, the number of simulated humans is chosen. This
+number varies between 1 and 8 for each simulation iteration.
+The algorithm then randomly assigns a starting position along
+any edge of the sensor area and an orientation between
+[−60◦,60 ◦] to each simulated human. The walking motion
+for each simulated human is provided through the motion
+capture file. When the paths of two simulated humans intersect
+and both activate the same cells on the sensor floor, one of the
+activations is ignored in our experiments. This simplification
+reduces the realism of heavily overlapping crowd situations
+and should be considered a limitation of the synthetic data
+generation.
+We find that combining recorded measurements with a small
+amount of random noise produces suitable training data for
+an AI model capable of categorizing human movement events.
+This constitutes an additional result of our work.
+B. Architecture and Implementation
+To detect and differentiate between the feet of people walking
+on the floor sensors, we use instance segmentation withpixel
+embeddingsand a subsequentweighted averagecalculation
+to estimate the position. These implementation decisions are
+justified for our applications since sensor floor mats are costly
+and, therefore, often used in small and strategically placed
+areas. For our supermarket experiments, we focus on the cash
+register area where two billboards are located. In the public
+bus, our sensor mats are placed close to the doors. Thus, we are
+processing dense data that are relevant for localized events such
+as waiting near a billboard or passenger movement near the bus
+doors. The embedding of pixels has shown clear advantages
+in such scenarios [28] over other AI models, e.g., a Support
+Vector Machine (SVM) that is suitable when a classification
+involves a large number of irrelevant features [29].
+We embed the individual pixels into an n-dimensional space
+such that all pixels of one-foot instance are near each other and
+far away from the pixels of other instances. In a subsequent
+step, the pixel embeddings are clustered to assign them to
+an instance. We use adiscriminative lossfunction and the
+mean shift algorithmfor clustering, which have been proven
+to be useful for training a reliable model without recurrent
+mechanisms in computer vision [30].
+Other instance segmentation networks typically have two
+stages: 1) the generation of region proposals; and 2) subimage
+segmentation [31]. In our case, region proposals are not reliable
+because the activation patterns produced by individual feet
+consist of a small number of pixels that are close to each other
+and often occlude.
+Fig. 4. Architecture of the instance segmentation network for detecting feet.
+Authorized licensed use limited to: Ostbayerische Technische Hochschule Regensburg. Downloaded on September 25,2026 at 09:21:56 UTC from IEEE Xplore.  Restrictions apply. (a) Permanent floor installation
+ (b) Layout and covered mats
+Fig. 5. Our sensor mats in a city bus.
+An advantage of the instance segmentation method with
+pixel embeddings, which we implemented, is that our AI model
+processes the image as a whole in one single segmentation
+stage and can better handle complex occlusions. It also does
+not need bounding boxes to provide additional information to
+differentiate between instances.
+We work with a 10×10 grid of floor patches. Our neural
+network architecture is shown in Figure 4 and consists of
+three convolutional layers with a mean pooling between them
+on the descending branch. For the ascending branch, this
+structure is mirrored, and the pooling operation is replaced by
+transposed convolution for upsampling. In addition, two skip
+connections are used. For the pixel embedding, 16 dimensions
+are used in the last layer of the network. This network size is
+sufficient for our purposes. A larger network would be harder
+to train and more prone to overfitting. The embedding in the
+16-dimensional space is done by calculating the loss. Instead of
+soft-max, as commonly used in instance segmentation, we use a
+discriminative loss function, since this loss function has shown
+better performance in detecting objects that are separated into
+multiple pieces, as required for our floor sensors: it pulls the
+embeddings towards a cluster center, while dissimilar data are
+pushed further away from each other. Our implementation of
+the model is based on U-Net [32] and was trained for 200
+epochs on a training dataset with 25918 synthetically generated
+footstep samples.
+Authorized licensed use limited to: Ostbayerische Technische Hochschule Regensburg. Downloaded on September 25,2026 at 09:21:56 UTC from IEEE Xplore.  Restrictions apply. The embeddings are provided by the network. In the next
+step, they are effectively grouped into instances using the mean
+shift algorithm. The mean-shift algorithm starts by selecting
+any pixel embedding as a cluster center and clusters all other
+pixel embeddings within a radius around it. In a second step,
+the mean of all clustered embeddings is calculated and chosen
+as the new center. All embeddings within a radius around this
+new center are clustered again. This process is repeated until
+the position converges and all cluster centers are in a dense
+region.
+After the instance segmentations are obtained, the foot
+position is calculated using formula (1):
+P=
+Pn
+i=1 wipiPn
+i=1 wi
+(1)
+In this formula (which originates from the detection of
+accidents [33]) P is the position of the foot, wi is the activation
+capacitance value, and pi is the position of the centroid of
+the activated triangle. Calculating the position in this way is
+accurate since we take into account the different capacitance
+values. A position will always tend toward activations with
+higher values, i.e., where the greater part of the foot is placed.
+We tested the detection algorithm on a synthetic validation
+dataset comprising 1541 entries and a hand-annotated dataset
+with 49 entries. In the synthetic validation dataset, the model
+scored a precision of 0.937 for anintersection over union(IoU)
+threshold of 0.95, while the precision in the hand-annotated
+dataset was slightly lower, as shown in Table I and Table II.
+Given the limited size of the hand-annotated dataset, these real-
+data results should be interpreted as an initial transferability
+check.
+TABLE I
+PRECISION AND RECALL METRICS OF THE NETWORK ON A SYNTHETIC
+VALIDATION DATASET.
+IoU Threshold 0.500 0.750 0.950
+Precision 0.973 0.941 0.937
+Recall 0.973 0.941 0.937
+TABLE II
+PRECISION AND RECALL METRICS OF THE NETWORK ON A
+HAND-ANNOTATED REAL DATASET
+IoU Threshold 0.500 0.750 0.950
+Precision 0.989 0.887 0.887
+Recall 0.989 0.887 0.887
+IV. EXPERIMENTS
+To motivate the two follow-up experiments showing the
+usefulness of our floor sensors, we start with a smart retail
+case study which we conducted in Christchurch, New Zealand,
+without using floor sensors.
+Christchurch is a unique area for examining the relation-
+ship between pedestrian traffic and retail revenue. The city
+underwent a significant redevelopment after the 2010 and
+2011 earthquakes, providing an opportunity to create modern
+infrastructure and amenities.
+Data for our experiment were collected using surveillance
+cameras from stores representing six different categories:
+“apparel & personal goods”, “cafes, bars & restaurants”, “fuel
+& automotive”, “groceries & liquor”, “home & recreation” and
+“other retail”. The diagram in Figure 6 shows the mean daily
+count of pedestrians on the x-axis. The mean expenditure in
+New Zealand Dollars is shown on the y-axis. One might expect
+a linear relationship; that is, more customers produce more
+revenue. Obviously, such a relationship isnotpresent in our
+data. Therefore, expenditures must be influenced by factors
+such as alternative shopping on-line or economic resilience.
+In addition to synthetic validation (Table I), we evaluated
+detection quality using 49 manually annotated real images
+(Table II). The result was a precision/recall = 0.887 with an
+IoU of 0.95. This result suggests that our instance segmentation
+model can be transferred to real mats. However, given the
+limited size of the hand-annotated real dataset, this conclusion
+should be interpreted as preliminary. The video study in the
+mall serves only as contextual evidence of pedestrian buying
+behavior. It wasnotused to train or evaluate the foot detection
+model.
+In the following two case studies, we not only count people
+but also explore movement-related indicators that may be
+associated with purchasing decisions and other local behavior
+patterns. These parameters probably include the range of
+available products and convenient and affordable access to
+shops, including parking and transportation options. Figure 5
+shows that our installation covers the entry/exit area and allows
+us to observe people getting on and off the bus. In addition,
+we observe who takes a seat and how many passengers remain
+standing in the entry area until they get off. Figure 7 shows
+the results of the first experiment we conducted for a month
+with our sensor floor mat on a city bus in Regensburg.
+2000 3000 4000 5000 6000 7000 8000
+Mean Daily Pedestrian Count
+120000
+140000
+160000
+180000
+200000Mean Daily Spending (NZ$)
+Daily Pedestrian Count and Daily Retail Spending
+Fig. 6. Daily pedestrian count and daily retail expenditures
+As shown in the right Figure 7, we observed peak times
+(left) and stepwise movements (right), which only occurred
+until there were fewer than 30 people on the bus. For this
+feasibility study, foot movement was classified as a step when
+two consecutive foot positions of a detected person were more
+than 30 cm apart. Likewise, we used more than 30 passengers as
+an operational definition of overcrowding. For data protection
+and operational reasons, we did not record synchronized videos
+during the trials in buses and supermarkets, as our experiments
+were designed as feasibility studies.
+Authorized licensed use limited to: Ostbayerische Technische Hochschule Regensburg. Downloaded on September 25,2026 at 09:21:56 UTC from IEEE Xplore.  Restrictions apply. 08:0008:3009:0009:3010:0010:3011:0011:3012:0012:3013:0013:3014:0014:3015:0015:3016:0016:3017:0017:3018:0018:3019:0019:3020:0020:3021:00
+Time of Day (hh:mm)
+0
+5
+10
+15
+20
+25
+30Number of People
+0
+1
+15
+10
+32
+17
+13
+7
+6
+3
+12
+7 7
+8
+11
+6
+13
+11
+7
+2
+1
+4
+3
+5
+4
+2
+0
+Number of People in the Bus (08:00 21:00)
+0 1 2 3 4 5 6 7
+Number of steps
+0
+20
+40
+60
+80
+100Number of persons
+112
+33
+18
+9
+4
+1 1 1
+Number of people
+with x steps (bus)
+Fig. 7. Tracking results showing passenger behavior in a public city bus, Left:
+Peak time observation of density on the bus, Right: Step-wise movements
+while the bus was crowded
+3 4 5 6 7 8 9 10 11 12 13 14 15 >15
+Wait time (seconds)
+0
+200
+400
+600
+800
+1000
+1200Number of People
+475 457
+261
+153 135 107 76 74 64 70 54 46 36
+1324
+People count per wait time
+8 9 10 11 12 13 14 15 16 17 18 19 20
+Hour of Day
+0
+100
+200
+300
+400
+500
+600
+700Number of People
+0 0 0 5
+41
+89
+282
+302
+450
+611 595
+713
+621
+People count by time of day
+Fig. 8. Visitor distribution during business hours. Left: People grouped at a
+billboard, Right: Hourly count of customers.
+20 40 60 80 100 120 140 160 180 200 220 240 260 280 300
+Staying Time (seconds)
+0.000
+0.005
+0.010
+0.015
+0.020
+0.025
+0.030Probability Density
+27.7%
+12.7%
+9.0%
+7.5%
+6.1%
+4.1%
+5.4%
+1.5%
+2.4%
+2.2%
+2.2%
+1.0%
+1.7%
+0.7%
+3.2%
+1.7%
+1.0%
+1.5%
+0.5%
+1.0%
+0.2%
+0.7%
+1.7%
+2.2%
+0.7%
+0.0%
+0.5%
+0.7%
+0.2%
+Probability Density (10s bin-based)
+Histogram
+Cumulative Probability
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Cumulative Probability
+Histogram, Probability Density and Cumulative Probability of Staying Time  15 Seconds
+Fig. 9. Customer waiting times ≥15 s in 10-second bins, left y-axis:
+Probability Density, right y-axis: Cumulative Probability.
+For the next experiment, we installed floor sensors in front
+of a digital billboard displaying new products at a grocery
+store in Regensburg, which we observed for one month. In
+our case study, we used heuristic grouping rules: whenever we
+observed people walking distances less than 70 cm within a
+given period, we treated this as a possible indicator of interest
+in the advertisements, as they stayed close to the billboard for
+a moment. In contrast, people leaving the sensor area after
+3 seconds or less were treated as people who are probably
+not interested in the advertisements. Figure 8 left shows a
+fine-grained classification of the measurements: For durations
+between 3 and 15 seconds, we discretely counted the number of
+people staying in front of the digital billboard. The number of
+customers who stay in front of the billboard rapidly decreases
+after 5 or 6 seconds; that is, there are only a few customers
+whose attention was caught for a longer time. Less than 100
+customers spent more than 10 seconds there, while more than
+500 stayed for only 2 seconds. This is still more than the time
+required for a single step; i.e., all these customers should have
+noticed the billboard.
+The result of a statistical analysis of the times people stood
+in front of the billboard is shown in Figure 9. We focused
+on people whom our AI recognizes as being in front of the
+billboard for more than 15 s. As a heuristic interpretation,
+those who spent this amount of time directly in front of
+the billboard are likely to have viewed the ad. Some false
+positives may remain; for example, people who stood near
+the billboard for longer periods for other reasons. This is
+underpinned by the approximately periodic length of stay
+corresponding to the duration of the advertisement running in a
+loop. In Figure 9, the value ranges are grouped into bins of 10 s.
+Many people turned away after 80 s, after 160 s, and around
+240 s. These intervals correspond to the repetitions of the ads
+shown. These observations indicate that the AI can provide a
+plausible mapping between foot movements and people in this
+deployment.
+The average customer count for one month of opening hours
+is shown in the right part of Figure 8 and was also verified
+using our on-site transcript. The highest customer density
+was observed during the evening, after many customers had
+finished their office hours. Duration measurements resulting
+from tracking customers’ feet are another valuable outcome of
+our experiment. The simple counting of customers could also
+have been achieved by evaluating the cash registers.
+Our observation of the staying durations clearly benefits
+from our AI model trained to understand foot movements. It
+provides additional insight into customer movement patterns,
+even when the store is crowded. Multiple values are taken
+into account: revenue, staying duration, customer count, and
+distances between feet (crowdedness). Thus, our data are also
+suitable for apartial information decomposition[34], which
+can classify values into unique, redundant, and synergistic ones.
+Since, no additional video recording of the bus and the
+supermarket floor map deployments exist for the experiment
+time, our behavioral interpretations cannot be proven. However,
+our data interpretations are plausible, even from a more distant
+perspective, taking the diagrams shown in this section into
+account.
+V. CONCLUSION
+One research question studied in this work was how
+computers can analyze local movement patterns in public
+spaces when camera recordings are not available. Using floor
+sensor mats on a bus and in a supermarket, and training with
+biomechanically simulated data, we created an AI model for
+privacy-aware gait analysis. Our results suggest that ML can
+detect footsteps on floor sensor mats with promising precision,
+Authorized licensed use limited to: Ostbayerische Technische Hochschule Regensburg. Downloaded on September 25,2026 at 09:21:56 UTC from IEEE Xplore.  Restrictions apply. that synthetic biomechanics-based data are useful for training,
+and that sensor placement in small, strategically chosen areas
+strongly affects the usefulness of the measurements. While floor
+sensor mats are not suitable for fast large-area tracking, they
+offer a privacy-preserving option for localized planning support.
+Given the small annotated real dataset and the heuristic nature
+of the case studies without synchronized video ground truth, the
+behavioral findings should be understood as indicative; future
+work should extend the real-world validation and compare
+our floor patches to alternative privacy-aware people tracking
+approaches.
+REFERENCES
+[1] T. Stadler et al., “A Method for the Optimized Placement of Bus
+Stops Based on V oronoi Diagrams,” inProceedings of the 55th Hawaii
+International Conference on System Sciences (HICSS55), 2022.DOI:
+10.24251/HICSS.2022.694.
+[2] T. Stadler et al., “Bus Demand Forecasting for Rural Areas Using
+XGBoost and Random Forest Algorithm,” en, inComputer Information
+Systems and Industrial Management, K. Saeed et al., Eds., Cham:
+Springer International Publishing, 2021.DOI: 10.1007/978- 3- 030-
+84340-3 36.
+[3] W. Huang et al., “Optimizing smart retail by experiment using an
+online AI model exploration interface,” inProceedings of the winter
+simulation conference, Orlando, Florida, USA: to appear in IEEE Press,
+2024.DOI: 10.1109/WSC63780.2024.10838897.
+[4] E. Ullmann-Margalit, “The case of the camera in the kitchen:
+Surveillance, privacy, sanctions, and governance,” en,Regulation &
+Governance, 2008.DOI: 10.1111/j.1748-5991.2008.00047.x.
+[5] F. Szuster et al., “Nonsampling Error in Surveys.,”The Statistician,
+1994.DOI: 10.2307/2348357.
+[6] Geoffrey Palmer et al.,Right of Privacy, NZLC SP19, New Zealand
+Law Commission, Wellington, ISBN 978-1-877316-43-2, 2008.
+[7] A. Ikkala et al., “Breathing Life Into Biomechanical User Models,”
+en, inProceedings of the 35th Annual ACM Symposium on User
+Interface Software and Technology, Bend OR USA: ACM, 2022.DOI:
+10.1145/3526113.3545689.
+[8] F. Michaud et al., “Pushing a robot along - a natural interface for
+human-robot interaction,” in2010 IEEE International Conference on
+Robotics and Automation, 2010.DOI: 10.1109/ROBOT.2010.5509584.
+[9] A. Weijters et al., “Rediscovering workflow models from event-based
+data using little thumb,”Integrated Computer-Aided Engineering,
+vol. 10, no. 2, 2003.DOI: 10.3233/ICA-2003-10205.
+[10] P. Girao et al., “Remembering old practices to validate measurement
+data,”IEEE Instrum. Meas. Mag., 2022.DOI: 10.1109/MIM.2022.
+9908264.
+[11] Y . Gong et al., “Field validation of beacon-based indoor tracking and
+localization system for construction workers,”KSCE Journal of Civil
+Engineering, vol. 29, no. 2, 2025.DOI: 10.1016/j.kscej.2024.100017.
+[12] A. Orebaugh et al., “Information security continuous monitoring for
+federal information systems and organizations,” National Institute of
+Standards and Technology (NIST), Washington, DC, Special Publication
+800-137, 2011.DOI: 10.6028/NIST.SP.800-137.
+[13] A. Alves et al., “Unhide: A novel framework for unsupervised human-
+interpretable dialogue exploration,”IEEE Access, 2025.DOI: 10.1109/
+ACCESS.2025.3632654.
+[14] C. Benjamin et al., “Urban greening, property and more-than-human
+commoning,”Australian Geographer, 2020.DOI: 10.1080/00049182.
+2019.1655828.
+[15] Y . Hahm et al., “The effect of built environments on the walking
+and shopping behaviors of pedestrians; a study with gps experiment
+in sinchon retail district in seoul, south korea,”Cities, 2019.DOI:
+10.1016/j.cities.2019.01.020.
+[16] H. Yamaguchi et al., “A human tracking and sensing platform for
+enabling smart city applications,” en, inProceedings of the Workshop
+Program of the 19th International Conference on Distributed Computing
+and Networking, New York, NY , USA: ACM, Jan. 2018.DOI: 10.1145/
+3170521.3170534.
+[17] K. Gebru, “A Privacy-preserving Scheme for Passive Monitoring of
+People’s Flows through WiFi Beacons,” in2022 IEEE 19th Annual
+Consumer Communications & Networking Conference (CCNC), Las
+Vegas, NV , USA: IEEE, 2022.DOI: 10 . 1109 / CCNC49033 . 2022 .
+9700591.
+[18] E. Cay et al., “Beacons for indoor positioning,” in2017 International
+Conference on Engineering and Technology (ICET), Antalya: IEEE,
+2017.DOI: 10.1109/ICEngTechnol.2017.8308143.
+[19] B. Zhou et al., “The carpet knows: Identifying people in a smart
+environment from a single step,” in2017 IEEE International Conference
+on Pervasive Computing and Communications Workshops (PerCom
+Workshops), 2017.DOI: 10.1109/PERCOMW.2017.7917618.
+[20] P. Srinivasan et al., “A pressure sensing floor for interactive media
+applications,” inProceedings of the 2005 ACM SIGCHI International
+Conference on Advances in Computer Entertainment Technology,
+ser. ACE ’05, Valencia, Spain: Association for Computing Machinery,
+2005.DOI: 10.1145/1178477.1178526.
+[21] K. Murdock,Google SketchUp and SketchUp Pro 7 bible. Indianapolis:
+John Wiley & Sons, 2009,ISBN: 978-0-470-29229-7.
+[22] M. Kobayashi et al.,Motion Capture Dataset for Practical Use of
+AI-based Motion Editing and Stylization, 2023.DOI: 10.48550/arXiv.
+2306.08861.
+[23] S. Kajita et al., “Study of dynamic biped locomotion on rugged terrain-
+theory and basic experiment,” inFifth International Conference on
+Advanced Robotics ’Robots in Unstructured Environments, 1991.DOI:
+10.1109/ICAR.1991.240688.
+[24] O. Urbann et al., “Flexible linear inverted pendulum model for
+cost-effective biped robots,” in2015 IEEE-RAS 15th International
+Conference on Humanoid Robots, 2015.DOI: 10.1109/HUMANOIDS.
+2015.7363525.
+[25] J. Higginson et al., “Muscle contributions to support during gait in
+an individual with post-stroke hemiparesis,”Journal of Biomechanics,
+2006.DOI: 10.1016/j.jbiomech.2005.05.032.
+[26] F. Di Nardo et al., “Machine learning for detection of muscular activity
+from surface emg signals,”Sensors, 2022.DOI: 10.3390/s22093393.
+[27] J. Lazarow et al., “Instance segmentation with mask-supervised
+polygonal boundary transformers,” in2022 IEEE/CVF Conference
+on Computer Vision and Pattern Recognition (CVPR), 2022.DOI:
+10.1109/CVPR52688.2022.00434.
+[28] Y . Wu et al., “Improving pixel embedding learning through intermediate
+distance regression supervision for instance segmentation,” inComputer
+Vision – ECCV 2020 Workshops, A. Bartoli et al., Eds., Springer
+International Publishing, 2020.DOI: 10.1007/978-3-030-65414-6 16.
+[29] A. Landeros et al., “Algorithms for sparse support vector machines,”
+Journal of Computational and Graphical Statistics, 2023.DOI: 10.1080/
+10618600.2022.2146697.
+[30] B. De Brabandere et al., “Semantic Instance Segmentation for Au-
+tonomous Driving,” in2017 IEEE Conference on Computer Vision and
+Pattern Recognition Workshops (CVPRW), Honolulu, HI: IEEE, 2017.
+DOI: 10.1109/CVPRW.2017.66.
+[31] J. M. Molina et al., “Advances in instance segmentation: Technologies,
+metrics and applications in computer vision,”Neurocomputing, vol. 625,
+2025.DOI: 10.1016/j.neucom.2025.129584.
+[32] O. Ronneberger et al., “U-Net: Convolutional Networks for Biomedical
+Image Segmentation,” en, inMedical Image Computing and Computer-
+Assisted Intervention – MICCAI 2015, N. Navab et al., Eds., Series
+Title: Lecture Notes in Computer Science, Cham: Springer International
+Publishing, 2015.DOI: 10.1007/978-3-319-24574-4 28.
+[33] R. Bagarotti et al., “An Algorithm for Estimating Gait Parameters
+Through a Commercial Sensorized Carpet,” in2018 IEEE 4th Inter-
+national Forum on Research and Technology for Society and Industry
+(RTSI), Palermo: IEEE, 2018.DOI: 10.1109/RTSI.2018.8548404.
+[34] S. Parkinson et al., “Characterizing high-order interactions between
+eye movement and head motion variables in augmented reality-based
+navigation experience,” in2025 IEEE International Conference on
+Multimedia and Expo (ICME), 2025.DOI: 10.1109/ICME59968.2025.
+11209820.
+Authorized licensed use limited to: Ostbayerische Technische Hochschule Regensburg. Downloaded on September 25,2026 at 09:21:56 UTC from IEEE Xplore.  Restrictions apply. 

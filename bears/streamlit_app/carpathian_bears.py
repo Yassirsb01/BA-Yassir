@@ -29,6 +29,45 @@ from wildlife_db_mariadb import WildlifeDatabase
 
 
 # =========================
+# Saison-Erklaerung
+# =========================
+# Die Saisonwerte im Carpathian-Datensatz (Spalte Season2) sind KEINE
+# Kalenderjahreszeiten, sondern biologische Jahresphasen des Braunbaeren.
+# Fuer Aussenstehende ist "Hyperphagia" oder "Forest fruits" ohne Erklaerung
+# nicht deutbar - deshalb hier einmal zentral hinterlegt und von allen drei
+# Filtern (map.py, pages/2_Experimente.py, Carpathian-Tab) genutzt, damit
+# der Text nicht dreifach gepflegt werden muss.
+#
+# Die Monatsangaben sind aus den Daten selbst ermittelt (1_bears_RO.csv,
+# 59997 Punkte) und bewusst als Spanne formuliert: die Phasen sind an das
+# Verhalten des einzelnen Baeren gebunden, nicht an feste Kalenderdaten,
+# deshalb ueberlappen sich die Randmonate.
+SEASON_DESCRIPTIONS = {
+    "Winter sleep":
+        "Winterruhe (etwa Nov–März): Bär in der Höhle, kaum Ortswechsel.",
+    "Den exit and reproduction":
+        "Höhlenausgang und Paarungszeit (etwa März–Juni): Bär verlässt die "
+        "Höhle, große Streifgebiete durch die Partnersuche.",
+    "Forest fruits":
+        "Waldfrüchte (etwa Juni–Aug): Beeren und Früchte reifen, "
+        "Nahrungssuche kleinräumig im Wald.",
+    "Hyperphagia":
+        "Hyperphagie (etwa Aug–Nov): stark gesteigerte Nahrungsaufnahme zum "
+        "Aufbau der Fettreserven vor der Winterruhe, höchste Aktivität.",
+}
+
+SEASON_HELP = (
+    "Keine Kalenderjahreszeiten, sondern **biologische Jahresphasen des "
+    "Braunbären** aus dem Carpathian-Datensatz (Spalte `Season2`):\n\n"
+    + "\n".join(f"- **{name}** – {text}" for name, text in SEASON_DESCRIPTIONS.items())
+    + "\n\nWozu der Filter: Aktivität und Bewegungsmuster unterscheiden sich "
+      "zwischen den Phasen erheblich. Die Einschränkung auf eine Phase "
+      "vergleicht Vergleichbares – etwa nur die Hyperphagie, in der Bären "
+      "am weitesten wandern."
+)
+
+
+# =========================
 # Paths + CSV fallback
 # =========================
 def _project_paths():
@@ -1033,8 +1072,9 @@ def display_carpathian_bears_section():
             select_all_ages = st.checkbox("Select All Age Classes", value=True)
             selected_ages = all_ages if select_all_ages else st.multiselect("Filter by Age Class", options=all_ages, default=all_ages)
 
-            select_all_seasons = st.checkbox("Select All Seasons", value=True)
-            selected_seasons = seasons if select_all_seasons else st.multiselect("Filter by Season", options=seasons, default=seasons)
+            select_all_seasons = st.checkbox("Select All Seasons", value=True, help=SEASON_HELP)
+            selected_seasons = seasons if select_all_seasons else st.multiselect(
+                "Filter by Season", options=seasons, default=seasons, help=SEASON_HELP)
 
             st.subheader("Date Range")
             date_range = st.date_input(

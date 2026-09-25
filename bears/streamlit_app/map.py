@@ -46,19 +46,23 @@ def _restore_map_state():
     lat, lng, zoom = _qf("m_lat"), _qf("m_lng"), _qf("m_zoom")
     center = (lat, lng) if (lat is not None and lng is not None) else None
 
-    basemap = qp.get("m_style") or "Liberty"
+    basemap = qp.get("m_style") or ml.DEFAULT_BASEMAP
     if basemap not in ml.BASEMAP_NAMES:
-        basemap = "Liberty"
+        basemap = ml.DEFAULT_BASEMAP
+
+    # 3D-Gelaende wie Zoom/Stil ueber Reruns mitnehmen
+    terrain3d = qp.get("m_3d") == "1"
 
     layers_raw = qp.get("m_layers", "")
     # Bei allererstem Aufruf (kein Query-Param vorhanden) -> None zurueckgeben,
     # damit render_maplibre() auf die alte Default-Logik (Simulation an) faellt.
     initial_visible = set(layers_raw.split(",")) if layers_raw else None
 
-    return center, zoom, basemap, initial_visible
+    return center, zoom, basemap, terrain3d, initial_visible
 
 
-_restored_center, _restored_zoom, _restored_basemap, _restored_visible = _restore_map_state()
+(_restored_center, _restored_zoom, _restored_basemap,
+ _restored_terrain3d, _restored_visible) = _restore_map_state()
 
 # Layer, deren zugrunde liegende Daten sich in diesem Rerun geaendert haben
 # (z.B. anderer Baer/Zeitraum gewaehlt) -> sollen automatisch angeflogen
@@ -178,7 +182,8 @@ except Exception as e:
 # CARPATHIAN  (Filter als Form -> laedt nur bei "Anwenden" neu)
 # ============================================================
 try:
-    from carpathian_bears import get_carpathian_geojson, get_carpathian_options
+    from carpathian_bears import (get_carpathian_geojson, get_carpathian_options,
+                                   SEASON_HELP)
 
     bears, seasons, min_date, max_date = get_carpathian_options()
 
@@ -194,7 +199,13 @@ try:
                 bears_choice = st.multiselect(
                     "Bären", bears, default=bears[: min(2, len(bears))]
                 )
-                sel_seasons = st.multiselect("Saison", seasons, default=seasons)
+                sel_seasons = st.multiselect(
+                    "Saison", seasons, default=seasons, help=SEASON_HELP,
+                )
+                st.caption(
+                    "Biologische Jahresphasen des Bären, keine Kalenderjahreszeiten – "
+                    "Erklärung über das (?) neben dem Feld."
+                )
                 date_range = st.date_input(
                     "Zeitraum", value=(min_date, max_date),
                     min_value=min_date, max_value=max_date,
@@ -375,7 +386,8 @@ ml.render_maplibre(
     simulation=simulation_data,
     wolf_lynx=wolf_lynx_data,
     gbif_bears=gbif_bears_data,
-    basemap=_restored_basemap,       # zuletzt gewaehlter Stil, sonst "Liberty"
+    basemap=_restored_basemap,       # zuletzt gewaehlter Stil, sonst Satellit
+    terrain3d=_restored_terrain3d,   # 3D-Schalter-Zustand mitnehmen
     center=_restored_center,          # zuletzt gesehene Kameraposition, sonst Default
     zoom=_restored_zoom,
     initial_visible=_restored_visible,  # zuletzt sichtbare Layer, sonst alte Default-Logik

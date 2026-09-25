@@ -24,6 +24,12 @@ mehr ueber OSM.py's rohen requests.post(), sondern:
     (Simulation laeuft dann einfach ohne Gelaende-Gewichtung weiter,
     statt sich an hunderten Fehlversuchen aufzuhaengen)
 
+Update 21.09.2026 - Offline-Betrieb: Mit prefetch_terrain.py kann das
+gesamte Kameragebiet EINMALIG vorab geladen werden. Innerhalb eines so
+vorberechneten Gebiets stellt get_features() NIE eine Internet-Anfrage -
+fehlender Eintrag bedeutet dort "nachweislich keine Merkmale". Die
+Live-Abfrage unten ist nur noch Rueckfall fuer Punkte ausserhalb.
+
 Funktionsweise (Cache): Koordinaten werden auf ein Raster gerundet
 (Standard ca. 150m Kantenlaenge), damit nahegelegene Simulationsschritte
 denselben Cache-Eintrag wiederverwenden statt jedes Mal neu abzufragen.
@@ -71,20 +77,70 @@ DEFAULT_QUERY_ELEMENTS = {
 }
 
 MIN_SECONDS_BETWEEN_REQUESTS = 1.2  # Selbst-Drosselung
-CONSECUTIVE_FAILURES_BEFORE_GIVING_UP = 3
+CONSECUTIVE_FAILURES_BEFORE_GIVING_UP = 2  # war 3 - bei wiederholt unzuverlaessigem Netz schneller aufgeben
+REQUEST_TIMEOUT_SECONDS = 6  # war 15 - haelt den Schaden pro Fehlversuch kleiner
 
 
 class TerrainCache:
+    """
+    WICHTIG: Der Circuit Breaker (_consecutive_failures / _giving_up) ist
+    bewusst auf KLASSENEBENE (nicht pro Instanz) gehalten. Grund: Bei
+    mehreren simulierten Baeren wird pro Baer potenziell eine eigene
+    TerrainCache()-Instanz erzeugt - waere der Zaehler an die Instanz
+    gebunden, wuerde er bei jedem neuen Baeren wieder bei 0 anfangen und
+    nie wirklich "aufgeben", selbst wenn das Netzwerk erkennbar nicht
+    erreichbar ist (genau das Verhalten, das im echten Testlauf am
+    15.09.2026 beobachtet wurde: >8 Fehlversuche ohne dass die
+    Abschalt-Meldung je kam). Klassenebene loest das unabhaengig davon,
+    wo/wie oft im Aufrufercode neue Instanzen erzeugt werden.
+    """
+    _consecutive_failures = 0
+    _giving_up = False
+
     def __init__(self, db_path: str = DEFAULT_CACHE_DB, grid_size_deg: float = GRID_SIZE_DEG):
         self.db_path = db_path
         self.grid_size_deg = grid_size_deg
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._init_db()
         self._last_request_time = 0.0
-        self._consecutive_failures = 0
-        self._giving_up = False  # Circuit Breaker: True = keine echten Anfragen mehr in diesem Lauf
+
+    @classmethod
+    def reset_circuit_breaker(cls):
+        """Setzt den Circuit Breaker manuell zurueck (z.B. fuer einen neuen,
+        unabhaengigen Simulationslauf oder zum Testen)."""
+        cls._consecutive_failures = 0
+        cls._giving_up = False
 
     def _init_db(self):
+        """
+        Legt die Tabellen an. Ist die Datei KEINE gueltige SQLite-Datenbank
+        (schon zweimal vorgekommen: einmal war terrain_cache.db mit dem
+        Quelltext von terrain_cache.py ueberschrieben), wirft sqlite3 hier
+        einen DatabaseError. Der darf die Anwendung nicht mitreissen: die
+        Gelaendegewichtung ist ein Komfortmerkmal, die Simulation laeuft
+        auch ohne sie. Deshalb wird der Cache in diesem Fall deaktiviert
+        (self.disabled) und der Grund in self.disabled_reason hinterlegt,
+        damit die Oberflaeche eine verstaendliche Warnung zeigen kann,
+        statt mit einem Traceback abzubrechen.
+        """
+        self.disabled = False
+        self.disabled_reason = ""
+        try:
+            self._create_tables()
+        except sqlite3.DatabaseError as e:
+            self.disabled = True
+            self.disabled_reason = (
+                f"Gelaende-Cache '{self.db_path}' ist keine gueltige SQLite-Datei ({e}). "
+                "Die Simulation laeuft ohne Gelaendegewichtung weiter. "
+                "Neu aufbauen mit: python prefetch_terrain.py --from-file "
+                "bear_simulation/data/terrain_prefetch_raw/*.json"
+            )
+            print(f"[terrain_cache] {self.disabled_reason}")
+            self._regions = []
+            self._mem = {}
+            return
+
+    def _create_tables(self):
         conn = sqlite3.connect(self.db_path)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS terrain_cache (
@@ -96,8 +152,39 @@ class TerrainCache:
                 PRIMARY KEY (lat_key, lon_key, radius)
             )
         """)
+        # Gebiete, die per prefetch_terrain.py vollstaendig vorab berechnet
+        # wurden. Innerhalb eines solchen Gebiets bedeutet "kein Cache-Eintrag"
+        # NICHT "unbekannt", sondern "hier ist nachweislich nichts" -> es wird
+        # dann NIE eine Internet-Anfrage gestellt.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS prefetch_regions (
+                min_lat_key REAL NOT NULL,
+                min_lon_key REAL NOT NULL,
+                max_lat_key REAL NOT NULL,
+                max_lon_key REAL NOT NULL,
+                radius INTEGER NOT NULL,
+                created_at REAL NOT NULL
+            )
+        """)
         conn.commit()
         conn.close()
+        self._regions = self._load_regions()
+        self._mem: dict = {}  # In-Memory-Nachschlagetabelle, spart SQLite-Zugriffe
+
+    def _load_regions(self) -> list[tuple]:
+        conn = sqlite3.connect(self.db_path)
+        rows = conn.execute(
+            "SELECT min_lat_key, min_lon_key, max_lat_key, max_lon_key, radius FROM prefetch_regions"
+        ).fetchall()
+        conn.close()
+        return rows
+
+    def _in_prefetched_region(self, lat_key: float, lon_key: float, radius: int) -> bool:
+        eps = 1e-9
+        for min_lat, min_lon, max_lat, max_lon, r in self._regions:
+            if r == radius and min_lat - eps <= lat_key <= max_lat + eps and min_lon - eps <= lon_key <= max_lon + eps:
+                return True
+        return False
 
     def _grid_key(self, lat: float, lon: float) -> tuple[float, float]:
         g = self.grid_size_deg
@@ -126,7 +213,7 @@ class TerrainCache:
         for i, url in enumerate(OVERPASS_URLS):
             self._throttle()
             try:
-                resp = requests.post(url, data={"data": query}, headers=HEADERS, timeout=15)
+                resp = requests.post(url, data={"data": query}, headers=HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
                 if resp.status_code == 200:
                     return resp.json()
                 last_error = f"{url} -> HTTP {resp.status_code}: {resp.text[:150]}"
@@ -138,6 +225,48 @@ class TerrainCache:
 
         raise RuntimeError(last_error)
 
+    def get_cells_in_box(self, min_lat: float, min_lon: float,
+                         max_lat: float, max_lon: float,
+                         radius: int = 150) -> list[tuple]:
+        """
+        Liefert ALLE gecachten Rasterzellen in einem Rechteck auf einmal.
+
+        Gegenstueck zu get_features(), das immer nur eine einzelne Zelle
+        liefert. Gebraucht fuer die cluster-basierte Richtungswahl
+        (japan_comparison.choose_weighted_direction), die das Gelaende im
+        Umkreis des Baeren als Flaeche betrachtet statt punktweise.
+
+        Fragt NIE bei Overpass nach: die Methode ist ausschliesslich fuer
+        vorab geladene Gebiete gedacht (prefetch_terrain.py). Eine fehlende
+        Zelle bedeutet dort "nachweislich keine Merkmale" und taucht in der
+        Rueckgabe schlicht nicht auf.
+
+        Returns:
+            Liste von (lat_key, lon_key, features_dict)
+        """
+        if getattr(self, "disabled", False):
+            return []
+        conn = sqlite3.connect(self.db_path)
+        try:
+            rows = conn.execute(
+                "SELECT lat_key, lon_key, features_json FROM terrain_cache "
+                "WHERE radius=? AND lat_key BETWEEN ? AND ? AND lon_key BETWEEN ? AND ?",
+                (radius, min_lat, max_lat, min_lon, max_lon),
+            ).fetchall()
+        except sqlite3.DatabaseError as e:
+            print(f"[terrain_cache] Rasterausschnitt nicht lesbar: {e}")
+            return []
+        finally:
+            conn.close()
+
+        out = []
+        for lat_key, lon_key, fj in rows:
+            try:
+                out.append((lat_key, lon_key, json.loads(fj)))
+            except (ValueError, TypeError):
+                continue
+        return out
+
     def get_features(self, lat: float, lon: float, radius: int = 150) -> dict:
         """
         Liefert Terrain-Features (0/1-Flags pro OSM-Tag/-Wert) fuer eine
@@ -146,7 +275,16 @@ class TerrainCache:
         sich die Terrain-Abfrage fuer den Rest des Laufs automatisch ab
         (Circuit Breaker) statt endlos weiter zu scheitern.
         """
+        # Cache unbrauchbar (siehe _init_db): keine Merkmale melden. Die
+        # Richtungswahl faellt damit automatisch auf den ungewichteten
+        # Zufall zurueck - genau das Verhalten ohne Gelaendegewichtung.
+        if getattr(self, "disabled", False):
+            return {}
+
         lat_key, lon_key = self._grid_key(lat, lon)
+        mem_key = (lat_key, lon_key, radius)
+        if mem_key in self._mem:
+            return self._mem[mem_key]
 
         conn = sqlite3.connect(self.db_path)
         row = conn.execute(
@@ -156,23 +294,34 @@ class TerrainCache:
 
         if row is not None:
             conn.close()
-            return json.loads(row[0])
+            features = json.loads(row[0])
+            self._mem[mem_key] = features
+            return features
 
-        if self._giving_up:
+        # Vorab heruntergeladenes Gebiet (prefetch_terrain.py): kein Eintrag
+        # heisst hier "nachweislich keine relevanten Gelaendemerkmale" ->
+        # sofort leeres Ergebnis, KEINE Internet-Anfrage.
+        if self._in_prefetched_region(lat_key, lon_key, radius):
+            conn.close()
+            self._mem[mem_key] = {}
+            return {}
+
+        if TerrainCache._giving_up:
             conn.close()
             return {}
 
         try:
             raw = self._query_overpass_raw(lat, lon, radius)
-            self._consecutive_failures = 0
+            TerrainCache._consecutive_failures = 0
         except Exception as e:
-            self._consecutive_failures += 1
+            TerrainCache._consecutive_failures += 1
             print(f"  [Warnung] Overpass-Abfrage fehlgeschlagen ({lat:.5f},{lon:.5f}): {e}")
-            if self._consecutive_failures >= CONSECUTIVE_FAILURES_BEFORE_GIVING_UP:
-                self._giving_up = True
+            if TerrainCache._consecutive_failures >= CONSECUTIVE_FAILURES_BEFORE_GIVING_UP:
+                TerrainCache._giving_up = True
                 print(f"  [Hinweis] {CONSECUTIVE_FAILURES_BEFORE_GIVING_UP} Fehler in Folge - "
-                      f"Terrain-Abfrage wird fuer den Rest dieses Laufs deaktiviert "
-                      f"(Simulation laeuft ohne Gelaende-Gewichtung weiter).")
+                      f"Terrain-Abfrage wird fuer den Rest der Sitzung deaktiviert, auch fuer "
+                      f"neu erzeugte TerrainCache-Instanzen (Simulation laeuft ohne "
+                      f"Gelaende-Gewichtung weiter).")
             conn.close()
             return {}
 

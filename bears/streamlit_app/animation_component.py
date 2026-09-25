@@ -15,9 +15,18 @@ Darstellung:
     Fixpunkten interpoliert. Der Gesamtpfad ist standardmaessig NICHT
     vorgezeichnet (sonst waere das Ergebnis schon vor dem Abspielen
     sichtbar) - per Schalter einblendbar.
-  - Oranger "Faecher": an JEDEM echten Schritt alle N Alternativ-Kandidaten,
-    die das Modell an genau diesem Punkt/Zeitpunkt erzeugt hat. KEIN eigener
-    Pfad - die Alternativen sind N unabhaengige Optionen PRO Schritt.
+  - Orange Punkte + Spuren: die SIMULIERTEN Baeren, die synchron zum echten
+    mitlaufen (sync_simulation.build_synced_geojson()["simulated"]). Es sind
+    bewusst MEHRERE, weil jeder Pfad nur EINE Zufallsziehung aus dem Modell
+    ist - keine Vorhersage. Die Streuung zwischen den Linien ist die
+    eigentliche Aussage: sie zeigt, wie gross der Moeglichkeitsraum des
+    Modells bei identischem Start ist.
+  - Grauer "Faecher" (abschaltbar): an JEDEM echten Schritt alle N
+    Alternativ-Kandidaten, die das Modell an genau diesem Punkt/Zeitpunkt
+    erzeugt hat. KEIN eigener Pfad - die Alternativen sind N unabhaengige
+    Optionen PRO Schritt, also der Moeglichkeitsraum eines EINZELNEN
+    Schritts (waehrend die orangen Spuren zeigen, was daraus ueber viele
+    Schritte hinweg wird).
 
 Kartengrundlagen:
   - Satellit (Esri World Imagery) fuer Gelaendekontext - dieselbe Quelle,
@@ -90,6 +99,12 @@ MAP_MAX_ZOOM = 18.5
 # MapLibre-3D-Terrain-Beispiels).
 TERRAIN_TILEJSON = "https://tiles.mapterhorn.com/tilejson.json"
 
+# Farben der simulierten Realisierungen. Bewusst alle im Orangeton
+# gehalten (= "das Modell"), aber unterscheidbar hell/dunkel, damit man
+# eine einzelne Linie ueber die Animation hinweg verfolgen kann. Wird
+# zyklisch wiederverwendet, falls mehr Realisierungen geliefert werden.
+SIM_COLORS = ["#e8830c", "#a8541a", "#f5b942", "#c96a0f", "#8a4513"]
+
 
 def _empty_fc():
     return {"type": "FeatureCollection", "features": []}
@@ -98,6 +113,7 @@ def _empty_fc():
 def render_animation_map(
     carpathian: dict | None = None,
     alternatives: dict | None = None,
+    simulated: dict | None = None,
     basemap: str = "Satellit",
     bear_label: str = "",
     dataset_label: str = "Carpathian Bears · GPS-Tracking (Rumänien)",
@@ -110,6 +126,13 @@ def render_animation_map(
             EINES Baeren an EINEM Tag, volle Aufloesung.
         alternatives: GeoJSON FeatureCollection der Alternativ-Kandidaten
             (aus sync_simulation.build_synced_geojson()["alternative"]).
+        simulated: GeoJSON FeatureCollection der durchgehenden simulierten
+            Pfade (aus build_synced_geojson()["simulated"]). Die Punkte
+            tragen properties.realization (0..n-1) und dieselben
+            properties.timestamp wie die echte Route - dadurch laufen
+            echter und simulierte Baeren zwangslaeufig synchron.
+            None oder leer = nur der echte Baer wird animiert (Verhalten
+            wie vor der Erweiterung).
         bear_label: z.B. "BÄR 7" - Kennzeichnung oben rechts im Panel.
         dataset_label: welcher Datensatz gezeigt wird (fuer Forschende, die
             die Karte ohne Vorwissen oeffnen).
@@ -119,6 +142,7 @@ def render_animation_map(
     cp_points = carpathian.get("points", _empty_fc())
     cp_paths = carpathian.get("paths", _empty_fc())
     alt_points = alternatives or _empty_fc()
+    sim_points = simulated or _empty_fc()
 
     styles_js = json.dumps(BASEMAP_STYLES)
     bm_options = "".join(
@@ -130,10 +154,17 @@ def render_animation_map(
         "cp_points": json.dumps(cp_points),
         "cp_paths": json.dumps(cp_paths),
         "alt_points": json.dumps(alt_points),
+        "sim_points": json.dumps(sim_points),
     }
 
     n_points_label = f"{len(cp_points.get('features', []))} Pkt."
     n_alts_label = f"{len(alt_points.get('features', []))} Kand."
+
+    n_realizations = len({
+        f.get("properties", {}).get("realization", 0)
+        for f in sim_points.get("features", [])
+    })
+    n_sims_label = f"{n_realizations} Läufe" if n_realizations else "–"
 
     html = f"""
 <!DOCTYPE html>
@@ -150,7 +181,7 @@ def render_animation_map(
     :root {{
       --bg:#e9e6e1; --ink:#1a1917; --ink-soft:#4a4741; --ink-faint:#8a8680;
       --panel:rgba(252,251,249,0.94); --line:rgba(18,17,15,.10); --line-strong:rgba(18,17,15,.13);
-      --blue:#1d6fb8; --orange:#e8830c;
+      --blue:#1d6fb8; --orange:#e8830c; --fan:#8a8680;
     }}
     html, body {{ margin:0; padding:0; height:100%; background:var(--bg);
                   font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif; color:var(--ink); }}
@@ -180,6 +211,13 @@ def render_animation_map(
     .ltext {{ font-size:11.5px; color:var(--ink-soft); }}
     .lcount {{ margin-left:auto; font-size:11px; color:var(--ink-faint); }}
     .hr {{ height:1px; background:var(--line); margin:12px 0 10px; }}
+    /* Hinweis, dass die simulierten Pfade Zufallsziehungen sind - bewusst
+       direkt unter der Legende und nicht nur in der Dokumentation. */
+    .sim-note {{
+      margin-top:10px; padding:7px 9px; border-radius:7px;
+      background:rgba(232,131,12,.09); border:1px solid rgba(232,131,12,.22);
+      font-size:10px; line-height:1.45; color:var(--ink-soft);
+    }}
     .section-label {{ font-size:10px; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:5px; }}
     #basemap-select {{
       width:100%; appearance:none; font-family:inherit; font-size:12px; color:var(--ink);
@@ -286,9 +324,20 @@ def render_animation_map(
         </div>
         <div class="legend-row">
           <span class="ldot" style="background:var(--orange); box-shadow:0 0 0 3px rgba(232,131,12,.16)"></span>
+          <span class="ltext">Simulierte Bären</span>
+          <span class="lcount mono">{n_sims_label}</span>
+        </div>
+        <div class="legend-row">
+          <span class="ldot" style="background:var(--fan)"></span>
           <span class="ltext">Alternativen (Fächer)</span>
           <span class="lcount mono">{n_alts_label}</span>
         </div>
+      </div>
+
+      <div class="sim-note">
+        Die orangen Pfade sind je <b>eine mögliche Realisierung</b> des
+        Modells – keine Vorhersage. Ein erneuter Lauf ergibt andere Pfade;
+        aussagekräftig ist ihre Streuung, nicht die einzelne Linie.
       </div>
 
       <div class="hr"></div>
@@ -297,6 +346,8 @@ def render_animation_map(
 
       <label class="switch-row"><input type="checkbox" id="toggle-3d" /> 3D-Gelände (Höhenmodell)</label>
       <label class="switch-row"><input type="checkbox" id="toggle-fullpath" /> Gesamtpfad einblenden</label>
+      <label class="switch-row"><input type="checkbox" id="toggle-sim" checked /> Simulierte Bären</label>
+      <label class="switch-row"><input type="checkbox" id="toggle-fan" checked /> Alternativen-Fächer</label>
       <div class="terrain-note" id="terrain-note">Höhendaten nicht erreichbar – Karte bleibt in 2D.</div>
     </div>
 
@@ -344,6 +395,10 @@ def render_animation_map(
             <div class="metric-val" id="metric-speed">–</div>
             <div class="metric-lbl">Tempo</div>
           </div>
+          <div title="Mittlerer Abstand zwischen dem echten Bären und den simulierten Bären zum aktuellen Zeitpunkt">
+            <div class="metric-val" id="metric-sep">–</div>
+            <div class="metric-lbl">Abstand ø</div>
+          </div>
         </div>
 
         <div class="right-controls">
@@ -373,8 +428,10 @@ def render_animation_map(
     const DATA = {{
       cp_points:  {data["cp_points"]},
       cp_paths:   {data["cp_paths"]},
-      alt_points: {data["alt_points"]}
+      alt_points: {data["alt_points"]},
+      sim_points: {data["sim_points"]}
     }};
+    const SIM_COLORS = {json.dumps(SIM_COLORS)};
 
     const map = new maplibregl.Map({{
       container:'map', style:STYLES["{basemap}"], center:[25.3,45.6], zoom:8,
@@ -395,6 +452,8 @@ def render_animation_map(
       addSrc('anim-marker', {{ type:'FeatureCollection', features:[] }});
       addSrc('alt-fan', {{ type:'FeatureCollection', features:[] }});
       addSrc('alt-fan-lines', {{ type:'FeatureCollection', features:[] }});
+      addSrc('sim-trail', {{ type:'FeatureCollection', features:[] }});
+      addSrc('sim-marker', {{ type:'FeatureCollection', features:[] }});
 
       if (!map.getSource('terrain-dem')) {{
         try {{ map.addSource('terrain-dem', {{ type:'raster-dem', url:TERRAIN_TILEJSON }}); }}
@@ -419,11 +478,26 @@ def render_animation_map(
         layout:{{ visibility:'none' }},
         paint:{{ 'line-color':'#1d6fb8','line-width':2,'line-opacity':0.35,'line-dasharray':[2,2] }} }});
 
+      // Faecher jetzt neutral-grau statt orange: Orange kennzeichnet ab
+      // sofort die mitlaufenden simulierten Baeren, sonst waeren beide
+      // Darstellungen der Simulation nicht auseinanderzuhalten.
       addLayerSafe({{ id:'alt-fan-lines', type:'line', source:'alt-fan-lines',
-        paint:{{ 'line-color':'#e8830c','line-width':1.2,'line-opacity':0.55,'line-dasharray':[1,1.5] }} }});
+        paint:{{ 'line-color':'#8a8680','line-width':1.1,'line-opacity':0.42,'line-dasharray':[1,1.5] }} }});
       addLayerSafe({{ id:'alt-fan', type:'circle', source:'alt-fan',
-        paint:{{ 'circle-radius':5,'circle-color':'#e8830c','circle-opacity':0.8,
+        paint:{{ 'circle-radius':4,'circle-color':'#8a8680','circle-opacity':0.65,
                  'circle-stroke-width':1,'circle-stroke-color':'#fff' }} }});
+
+      // Simulierte Baeren: liegen UNTER dem echten Baeren, damit die
+      // Referenz (blau) immer lesbar bleibt, auch wenn sich Pfade kreuzen.
+      // Farbe kommt pro Feature aus properties.color (eine Realisierung =
+      // eine Farbe), deshalb ein Layer fuer beliebig viele Laeufe.
+      addLayerSafe({{ id:'sim-trail', type:'line', source:'sim-trail',
+        paint:{{ 'line-color':['get','color'],'line-width':2.4,'line-opacity':0.85 }} }});
+      addLayerSafe({{ id:'sim-marker-halo', type:'circle', source:'sim-marker',
+        paint:{{ 'circle-radius':10,'circle-color':['get','color'],'circle-opacity':0.22 }} }});
+      addLayerSafe({{ id:'sim-marker', type:'circle', source:'sim-marker',
+        paint:{{ 'circle-radius':5,'circle-color':['get','color'],
+                 'circle-stroke-width':2,'circle-stroke-color':'#fff' }} }});
 
       addLayerSafe({{ id:'anim-trail', type:'line', source:'anim-trail',
         paint:{{ 'line-color':'#1d6fb8','line-width':3.5,'line-opacity':0.95 }} }});
@@ -433,14 +507,19 @@ def render_animation_map(
         paint:{{ 'circle-radius':6.5,'circle-color':'#1d6fb8','circle-stroke-width':2.5,'circle-stroke-color':'#fff' }} }});
 
       applyFullPathVisibility();
+      applyLayerToggles();
       if (uiState.terrain3d) applyTerrain(true);
     }}
 
     function fitToData() {{
       const coords = [];
-      (DATA.cp_points.features || []).forEach(f => {{
-        const c = f.geometry && f.geometry.coordinates;
-        if (c && isFinite(c[0]) && isFinite(c[1])) coords.push(c);
+      // Auch die simulierten Pfade einbeziehen - sie laufen bewusst von der
+      // echten Route weg und waeren sonst schnell ausserhalb des Bildes.
+      [DATA.cp_points, DATA.sim_points].forEach(fc => {{
+        ((fc && fc.features) || []).forEach(f => {{
+          const c = f.geometry && f.geometry.coordinates;
+          if (c && isFinite(c[0]) && isFinite(c[1])) coords.push(c);
+        }});
       }});
       if (!coords.length) return;
       let minLng=Infinity,minLat=Infinity,maxLng=-Infinity,maxLat=-Infinity;
@@ -454,12 +533,26 @@ def render_animation_map(
     // -------------------------------------------------------
     // Kartenstil / 3D / Gesamtpfad
     // -------------------------------------------------------
-    const uiState = {{ terrain3d:false, fullPath:false }};
+    const uiState = {{ terrain3d:false, fullPath:false, showSim:true, showFan:true }};
 
     function applyFullPathVisibility() {{
       if (map.getLayer('cp-paths-static')) {{
         map.setLayoutProperty('cp-paths-static','visibility', uiState.fullPath ? 'visible' : 'none');
       }}
+    }}
+
+    // Simulierte Baeren und Faecher einzeln abschaltbar: beide gleichzeitig
+    // ergeben bei vielen Schritten ein unuebersichtliches Bild, und je nach
+    // Fragestellung interessiert nur eins von beidem.
+    function applyLayerToggles() {{
+      const set = (id, on) => {{
+        if (map.getLayer(id)) map.setLayoutProperty(id,'visibility', on ? 'visible' : 'none');
+      }};
+      set('sim-trail', uiState.showSim);
+      set('sim-marker', uiState.showSim);
+      set('sim-marker-halo', uiState.showSim);
+      set('alt-fan', uiState.showFan);
+      set('alt-fan-lines', uiState.showFan);
     }}
 
     function applyTerrain(on) {{
@@ -512,6 +605,18 @@ def render_animation_map(
         uiState.fullPath = e.target.checked;
         applyFullPathVisibility();
       }});
+
+      const tsim = document.getElementById('toggle-sim');
+      if (tsim) tsim.addEventListener('change', e => {{
+        uiState.showSim = e.target.checked;
+        applyLayerToggles();
+      }});
+
+      const tfan = document.getElementById('toggle-fan');
+      if (tfan) tfan.addEventListener('change', e => {{
+        uiState.showFan = e.target.checked;
+        applyLayerToggles();
+      }});
     }}
 
     // -------------------------------------------------------
@@ -522,6 +627,7 @@ def render_animation_map(
 
     const animState = {{
       playing:false, speed:300, track:[], altFan:{{steps:[], bySteptime:{{}}}},
+      simTracks:[],   // je Realisierung ein {{color, points:[{{t,lng,lat}}]}}
       startTime:null, endTime:null, currentTime:null, durHours:-1,
       rafId:null, lastWallClock:null,
     }};
@@ -546,6 +652,26 @@ def render_animation_map(
       }});
       points.sort((a,b)=>a.t-b.t);
       return points;
+    }}
+
+    // Simulierte Punkte nach Realisierung gruppieren. Dieselbe Struktur wie
+    // der echte Track, damit interpolatePosition()/trailCoords() ohne
+    // Sonderfall auch fuer die simulierten Baeren funktionieren.
+    function buildSimTracks() {{
+      const byRealization = {{}};
+      (DATA.sim_points.features || []).forEach(f => {{
+        const p = f.properties || {{}};
+        const t = parseTime(p.timestamp);
+        if (isNaN(t)) return;
+        const r = p.realization == null ? 0 : p.realization;
+        (byRealization[r] = byRealization[r] || []).push({{
+          t, lng:f.geometry.coordinates[0], lat:f.geometry.coordinates[1]
+        }});
+      }});
+      return Object.keys(byRealization).map(Number).sort((a,b)=>a-b).map((r, i) => {{
+        const points = byRealization[r].sort((a,b)=>a.t-b.t);
+        return {{ color: SIM_COLORS[i % SIM_COLORS.length], points }};
+      }});
     }}
 
     function buildAlternativeFan() {{
@@ -625,6 +751,25 @@ def render_animation_map(
       const ms = map.getSource('anim-marker'); if (ms) ms.setData({{type:'FeatureCollection', features:markerFeatures}});
       const ts = map.getSource('anim-trail');  if (ts) ts.setData({{type:'FeatureCollection', features:trailFeatures}});
 
+      // Simulierte Baeren: exakt dieselbe Zeitlogik wie beim echten Baeren,
+      // nur eben N-mal. Die Farbe reist als Feature-Property mit, damit ein
+      // einziger Layer alle Realisierungen darstellen kann.
+      const simMarkers = [], simTrails = [];
+      let sumSep = 0, nSep = 0;
+      animState.simTracks.forEach(st => {{
+        const sp = interpolatePosition(st.points, animState.currentTime);
+        if (sp) {{
+          simMarkers.push({{ type:'Feature', properties:{{color:st.color}},
+            geometry:{{type:'Point', coordinates:[sp.lng, sp.lat]}} }});
+          if (pos) {{ sumSep += haversine(pos, sp); nSep++; }}
+        }}
+        const c = trailCoords(st.points, animState.currentTime);
+        if (c.length >= 2) simTrails.push({{ type:'Feature', properties:{{color:st.color}},
+          geometry:{{type:'LineString', coordinates:c}} }});
+      }});
+      const sms = map.getSource('sim-marker'); if (sms) sms.setData({{type:'FeatureCollection', features:simMarkers}});
+      const sts = map.getSource('sim-trail');  if (sts) sts.setData({{type:'FeatureCollection', features:simTrails}});
+
       const stepTime = currentFanStepTime(animState.currentTime);
       const fanCoords = stepTime != null ? (animState.altFan.bySteptime[stepTime] || []) : [];
       const fanFeatures = fanCoords.map(c => ({{ type:'Feature', properties:{{}}, geometry:{{type:'Point', coordinates:c}} }}));
@@ -656,6 +801,18 @@ def render_animation_map(
       if (spdEl) {{
         const kmh = currentStepSpeedKmh(animState.track, animState.currentTime);
         spdEl.textContent = kmh == null ? '–' : kmh.toFixed(2) + ' km/h';
+      }}
+      // Wie weit ist das Modell im Moment von der Realitaet entfernt?
+      // Macht aus dem optischen Vergleich eine ablesbare Zahl - mit
+      // wachsender Zeit sollte der Abstand zunehmen, weil sich die
+      // Simulation von der echten Route loest (kein Nachfuehren!).
+      const sepEl = document.getElementById('metric-sep');
+      if (sepEl) {{
+        if (!nSep) sepEl.textContent = '–';
+        else {{
+          const m = sumSep / nSep;
+          sepEl.textContent = m >= 1000 ? (m/1000).toFixed(2) + ' km' : Math.round(m) + ' m';
+        }}
       }}
 
       const playIcon = document.getElementById('play-icon');
@@ -780,6 +937,7 @@ def render_animation_map(
     function initAnimation() {{
       animState.track = buildTrackFromCarpathian();
       animState.altFan = buildAlternativeFan();
+      animState.simTracks = buildSimTracks();
 
       const hint = document.getElementById('anim-hint');
       if (!animState.track.length) {{
@@ -803,6 +961,9 @@ def render_animation_map(
       hintText += animState.altFan.steps.length
         ? ('Alternativen an ' + animState.altFan.steps.length + ' Schritten')
         : 'keine Alternativen geladen';
+      hintText += animState.simTracks.length
+        ? (' · ' + animState.simTracks.length + ' simulierte Realisierungen')
+        : ' · keine simulierten Pfade';
       if (hint) hint.textContent = hintText;
       return true;
     }}

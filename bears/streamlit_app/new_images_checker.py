@@ -1,5 +1,5 @@
 """
-Prueft, ob neue Bilder in der DB sind (seit letztem Check)
+Checks the database for images that arrived since the last check.
 """
 
 from wildlife_db_mariadb import WildlifeDatabase
@@ -10,17 +10,17 @@ class NewImagesChecker:
     def __init__(self):
         self.db = WildlifeDatabase()
 
-    # ttl=30: laeuft hoechstens alle 30s echt gegen die DB, egal wie oft
-    # Streamlit dazwischen rerunt (z.B. bei jeder Filter-Aenderung in einem
-    # anderen Formular). "_self" -> Streamlit hasht die Instanz nicht, cached
-    # nur ueber (minutes_ago).
+    # ttl=30: hits the database at most every 30 s, no matter how often
+    # Streamlit reruns in between, for example on every filter change in
+    # another form. The leading underscore in "_self" tells Streamlit not
+    # to hash the instance, so the cache key is (minutes_ago) alone.
     @st.cache_data(ttl=30, show_spinner=False)
     def get_new_images_since(_self, minutes_ago=60):
         """
-        Holt neue Bilder aus den letzten X Minuten
-        
+        Return images that arrived within the last X minutes.
+
         Args:
-            minutes_ago: Wie viele Minuten zurueck pruefen (default: 60)
+            minutes_ago: how many minutes to look back (default: 60)
             
         Returns:
             List von Bildern mit Details
@@ -45,7 +45,7 @@ class NewImagesChecker:
     
     def get_latest_image_time(self):
         """
-        Holt den Zeitstempel des neuesten Bildes
+        Return the timestamp of the most recent image.
         """
         query = """
             SELECT MAX(created_at) as latest
@@ -75,7 +75,7 @@ class NewImagesChecker:
     @st.cache_data(ttl=30, show_spinner=False)
     def get_last_check_time(_self):
         """
-        Holt die letzte Pruefzeit aus der DB
+        Read the time of the last check from the database.
         
         Returns:
             datetime object oder None
@@ -98,7 +98,7 @@ class NewImagesChecker:
     
     def update_last_check_time(self):
         """
-        Speichert die aktuelle Zeit als letzte Pruefzeit in der DB
+        Store the current time as the time of the last check.
         """
         current_time = datetime.now().isoformat()
         
@@ -112,7 +112,7 @@ class NewImagesChecker:
         
         self.db.execute_update(query, (current_time, current_time))
 
-        # Cache leeren: ohne das wuerde "Jetzt pruefen" bis zu 30s lang
-        # noch den alten (gecachten) Stand anzeigen statt sofort den neuen.
+        # Clear the cache: without this, "Check now" would keep showing
+        # the previous cached state for up to 30 s instead of the new one.
         NewImagesChecker.get_last_check_time.clear()
         NewImagesChecker.get_new_images_since.clear()

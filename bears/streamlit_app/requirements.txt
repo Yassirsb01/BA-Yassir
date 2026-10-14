@@ -1,0 +1,41 @@
+# Runtime dependencies of the Wildlife Movement Analysis System.
+#
+# Tested with Python 3.14.3 on Windows 11. Every entry below is imported
+# by a module that the Streamlit application actually loads; the list was
+# derived from the import statements in the source, not written by hand.
+#
+#   python -m venv .venv
+#   .venv\Scripts\activate          (Windows)
+#   source .venv/bin/activate       (Linux, macOS)
+#   pip install -r requirements.txt
+#   streamlit run map.py
+#
+# The MariaDB-backed features additionally require the university VPN; see
+# README.md. The application starts and the simulation runs without it.
+
+# Web application framework and UI
+streamlit==1.55.0
+
+# Data handling
+pandas==2.3.3
+numpy==2.5.3
+
+# Geospatial maths: coordinate transforms, geodesic distances, UTM
+pyproj==3.7.2
+geopy==2.4.1
+utm==0.8.1
+geographiclib==2.1
+
+# HTTP access to the Overpass, BfN WFS and GBIF services
+requests==2.32.5
+
+# MariaDB / MySQL access
+mysql-connector-python==9.6.0
+
+# Figures: matplotlib for the activity overlap analysis,
+# plotly for the interactive charts in the Carpathian tab
+matplotlib==3.11.1
+plotly==6.6.0
+
+# Image handling for the camera photographs
+Pillow==12.1.1

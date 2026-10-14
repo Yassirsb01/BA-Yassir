@@ -1,28 +1,28 @@
 """
 japan_map_component.py
 ========================
-Karten-Komponente fuer das Japan-Experiment (Version 2): EINE Kamera wird
-gewaehlt, N simulierte Baeren starten dort exakt an einem echten Foto-
-Ereignis (Ort + Zeit) und bewegen sich animiert nach dem rumaenischen
-Modell (Geschwindigkeit + optionale Gelaendegewichtung + Richtungstraegheit).
-Echte Fotozeiten AN DIESER KAMERA werden zusaetzlich als Marken auf der
-Zeitleiste eingezeichnet, direkt zum Vergleich mit den simulierten Baeren.
+Map component for the Japan experiment. One camera is selected, N
+simulated bears start there at an actual photo event (place and time) and
+move according to the Carpathian model (speed, optional terrain weighting
+and directional persistence). Real photo times AT THAT CAMERA are drawn as
+marks on the same timeline, for direct comparison with the simulated
+bears.
 
-Kein "Gesamt"-Zeitfenster (anders als bei der Carpathian-Animation): die
-Simulation hat kein natuerliches Ende, deshalb nur feste Fenster
-(15 Min bis 72 Std).
+There is no "entire period" time window as in the Carpathian animation:
+the simulation has no natural end, so only fixed windows are offered
+(15 minutes to 72 hours).
 
-Bewusst auf derselben, bereits mehrfach getesteten Grundlogik wie
-animation_component.py aufgebaut (parseTime, Interpolation, Play/Pause/
-Step/Scrub) - erweitert um mehrere gleichzeitige Baeren-Tracks statt einem.
+Built on the same, already tested logic as animation_component.py
+(parseTime, interpolation, play/pause/step/scrub), extended to several
+simultaneous bear tracks instead of one.
 
-3D-Gelaende: gleiche Bedienung und gleiches Fehlerverhalten wie in
-animation_component.py (Hoehenmodell + Schummerung + Kameraneigung, per
-Schalter, bei Nichterreichbarkeit bleibt die Karte in 2D nutzbar). Hier
-inhaltlich sogar wichtiger als bei den Carpathian-Daten: die Kameras der
-Fukushima-Region stehen in stark reliefiertem Gelaende, und ob ein
-simulierter Baer einen Hang quert oder einem Tal folgt, ist in der flachen
-Draufsicht nicht zu erkennen.
+3D terrain: same controls and same failure behaviour as in
+animation_component.py (elevation model, hillshading and camera pitch
+behind a toggle; if the elevation data cannot be loaded the map stays
+usable in 2D). It matters more here than for the Carpathian data: the
+cameras of the Fukushima region stand in strongly structured terrain, and
+whether a simulated bear crosses a slope or follows a valley cannot be
+seen in a flat top-down view.
 """
 
 import json
@@ -43,12 +43,12 @@ BASEMAP_STYLES = {
     "Liberty": "https://tiles.openfreemap.org/styles/liberty",
 }
 
-# Kostenfreie Hoehendaten ohne API-Schluessel (Quelle des offiziellen
-# MapLibre-3D-Terrain-Beispiels) - dieselbe Quelle wie in
-# animation_component.py, damit beide Karten identisch funktionieren.
+# Free elevation data without an API key (the source used by the
+# official MapLibre 3D terrain example), identical to the source in
+# animation_component.py so that both maps behave the same.
 TERRAIN_TILEJSON = "https://tiles.mapterhorn.com/tilejson.json"
 
-# Unterscheidbare Farben fuer bis zu 20 gleichzeitige Baeren (zyklisch wiederverwendet)
+# Distinguishable colours for up to 20 simultaneous bears, reused cyclically
 BEAR_COLORS = [
     "#1d6fb8", "#e8830c", "#2fa365", "#c0392b", "#8e44ad",
     "#16a085", "#d35400", "#2980b9", "#c2185b", "#7f8c8d",
@@ -82,36 +82,36 @@ def render_japan_map(
 ):
     """
     Args:
-        cameras: alle Kamerastandorte {device_id, lat, lng} (fuer den
-            Kartenkontext/Aufleuchten bei Annaeherung).
-        start_camera: die gewaehlte Startkamera {device_id, lat, lng}.
-        bears: aus japan_comparison.simulate_multiple_bears_from_sighting()
-            - Liste {bear_index, gender, age, season, path}.
-        real_events: Liste von datetime - echte Fotozeiten AN DER
-            Startkamera (aus get_real_events_for_camera()), fuer die
-            Zeitleisten-Markierungen.
-        photo_counts: {device_id: anzahl echter Fotos} aus
-            japan_comparison.get_photo_counts_by_camera(), oder None, wenn
-            die Datenbank nicht erreichbar war.
+        cameras: all camera locations {device_id, lat, lng}, for map
+            context and for lighting up on approach.
+        start_camera: the selected starting camera {device_id, lat, lng}.
+        bears: output of
+            japan_comparison.simulate_multiple_bears_from_sighting(), a
+            list of {bear_index, gender, age, season, path}.
+        real_events: list of datetime, the real photo times AT THE
+            starting camera (from get_real_events_for_camera()), used for
+            the timeline marks.
+        photo_counts: {device_id: number of real photographs} from
+            japan_comparison.get_photo_counts_by_camera(), or None if the
+            database could not be reached.
 
-            WICHTIG - None und {} bedeuten NICHT dasselbe:
-            None  = Fotozahlen unbekannt (keine DB-Verbindung)
-            {}    = DB erreichbar, aber an keiner Kamera Fotos
-            Ein FEHLENDER Schluessel bei erreichbarer DB bedeutet
-            ebenfalls "null Fotos" und nicht "unbekannt" - die
-            zugrundeliegende Abfrage gruppiert nach device_id und liefert
-            Kameras ohne Aufnahmen schlicht nicht mit. Genau diese
-            Unterscheidung fehlte zuerst, wodurch 10 von 20 Kameras trotz
-            bestehender Verbindung "keine DB-Verbindung" gemeldet haben.
+            None and {} do NOT mean the same thing:
+            None = photo counts unknown (no database connection)
+            {}   = database reachable, but no photographs at any camera
+            A MISSING key with a reachable database also means "zero
+            photographs" rather than "unknown": the underlying query
+            groups by device_id and simply omits cameras without
+            recordings. Without this distinction, 10 of 20 cameras
+            reported "no database connection" despite a working one.
     """
     counts_known = photo_counts is not None
     photo_counts = photo_counts or {}
     start_id = str(start_camera.get("device_id", ""))
 
-    # Die Fotozahl wandert als Feature-Property mit, damit das Popup sie
-    # ohne zweite Datenquelle anzeigen kann. -1 heisst ausschliesslich
-    # "unbekannt, weil keine DB-Verbindung"; 0 heisst "nachweislich keine
-    # Fotos an dieser Kamera".
+    # The photo count travels along as a feature property so the popup
+    # can show it without a second data source. -1 means exclusively
+    # "unknown because there is no database connection"; 0 means
+    # "demonstrably no photographs at this camera".
     cameras_geojson = {
         "type": "FeatureCollection",
         "features": [
@@ -133,7 +133,7 @@ def render_japan_map(
     for i, b in enumerate(bears):
         bear_tracks_js.append({
             "color": BEAR_COLORS[i % len(BEAR_COLORS)],
-            "label": f"Bär {i + 1} ({b['gender']}/{b['age']}, {b['season']})",
+            "label": f"Bear {i + 1} ({b['gender']}/{b['age']}, {b['season']})",
             "path": _path_to_geojson(b["path"]),
         })
 
@@ -147,8 +147,8 @@ def render_japan_map(
 
     n_bears = len(bears)
     status_note = (
-        f"{n_bears} simulierte(r) Bär(en) ab Kamera {start_camera.get('device_id','?')} · "
-        f"{len(real_events)} echte Fotos an dieser Kamera bekannt"
+        f"{n_bears} simulated bear(s) from camera {start_camera.get('device_id','?')} - "
+        f"{len(real_events)} real photograph(s) known at this camera"
     )
 
     html = f"""
@@ -257,24 +257,24 @@ def render_japan_map(
     <div id="map"></div>
 
     <div class="status-panel glass">
-      <div class="status-title">Japan-Experiment</div>
+      <div class="status-title">Japan experiment</div>
       <div class="status-note">{status_note}</div>
       <div class="legend" id="bear-legend"></div>
       <div class="hr"></div>
-      <div class="section-label">Kartenstil</div>
+      <div class="section-label">Base map</div>
       <select id="basemap-select">{bm_options}</select>
 
-      <label class="switch-row"><input type="checkbox" id="toggle-3d" /> 3D-Gelände (Höhenmodell)</label>
-      <div class="terrain-note" id="terrain-note">Höhendaten nicht erreichbar – Karte bleibt in 2D.</div>
+      <label class="switch-row"><input type="checkbox" id="toggle-3d" /> 3D terrain (elevation model)</label>
+      <div class="terrain-note" id="terrain-note">Elevation data unavailable; the map stays in 2D.</div>
     </div>
 
     <div class="log-panel glass">
-      <div class="log-title">Auslösungs-Log (alle Kameras)</div>
-      <div class="log-list" id="log-list"><div class="log-empty">Noch keine Auslösung</div></div>
+      <div class="log-title">Trigger log (all cameras)</div>
+      <div class="log-list" id="log-list"><div class="log-empty">No trigger yet</div></div>
     </div>
 
     <div class="control-bar glass">
-      <div class="real-event-legend"><span class="swatch"></span> rote Striche = echte Fotos an dieser Kamera</div>
+      <div class="real-event-legend"><span class="swatch"></span> red marks = real photographs at this camera</div>
       <div class="scrub-row">
         <div class="time-label mono" id="start-label">–</div>
         <div class="track" id="track">
@@ -287,16 +287,16 @@ def render_japan_map(
       </div>
       <div class="controls-row">
         <div class="btn-cluster">
-          <button id="step-back" class="icon-btn" title="Ein Schritt zurück">
+          <button id="step-back" class="icon-btn" title="One step back">
             <svg width="13" height="13" viewBox="0 0 12 12"><rect x="1" y="1.5" width="1.8" height="9" fill="currentColor"></rect><polygon points="11,1.5 11,10.5 4,6" fill="currentColor"></polygon></svg>
           </button>
           <button id="play-btn" class="play-btn" title="Play/Pause">
             <svg id="play-icon" width="13" height="13" viewBox="0 0 12 12"><polygon points="2.5,1.2 11,6 2.5,10.8" fill="currentColor"></polygon></svg>
           </button>
-          <button id="step-fwd" class="icon-btn" title="Ein Schritt vor">
+          <button id="step-fwd" class="icon-btn" title="One step forward">
             <svg width="13" height="13" viewBox="0 0 12 12"><polygon points="1,1.5 1,10.5 8,6" fill="currentColor"></polygon><rect x="9.2" y="1.5" width="1.8" height="9" fill="currentColor"></rect></svg>
           </button>
-          <button id="reset-btn" class="icon-btn" title="Zurücksetzen" style="font-size:15px;">↺</button>
+          <button id="reset-btn" class="icon-btn" title="Reset" style="font-size:15px;">&#8634;</button>
         </div>
         <div class="divider"></div>
         <div class="clock-block">
@@ -325,16 +325,16 @@ def render_japan_map(
 
     const map = new maplibregl.Map({{
       container:'map', style:STYLES["{basemap}"], center:startCamCoords, zoom:13,
-      maxPitch:85,   // ohne das laesst sich die Kamera nicht in die 3D-Schraege neigen
+      maxPitch:85,   // without this the camera cannot be pitched into the 3D view
       attributionControl:false,
     }});
-    // visualizePitch zeigt die Neigung im Kompass an - im 3D-Modus sonst
-    // schwer zu erkennen, in welcher Schraege man gerade steht.
+    // visualizePitch shows the pitch in the compass; otherwise it is hard
+    // to tell which inclination the view is currently at.
     map.addControl(new maplibregl.NavigationControl({{ visualizePitch:true }}), 'top-right');
     map.addControl(new maplibregl.ScaleControl({{maxWidth:110, unit:'metric'}}), 'bottom-right');
 
     // -------------------------------------------------------
-    // Sources + Layer: Kameras + EIN Track-Paar (Marker/Trail) PRO Bär
+    // Sources and layers: cameras plus one marker/trail pair PER bear
     // -------------------------------------------------------
     function addSourcesAndLayers() {{
       const addSrc = (id, d) => {{ if (!map.getSource(id)) map.addSource(id, {{type:'geojson', data:d}}); }};
@@ -342,13 +342,13 @@ def render_japan_map(
 
       if (!map.getSource('terrain-dem')) {{
         try {{ map.addSource('terrain-dem', {{ type:'raster-dem', url:TERRAIN_TILEJSON }}); }}
-        catch (e) {{ console.warn('Terrain-Quelle nicht verfuegbar:', e); }}
+        catch (e) {{ console.warn('Terrain source unavailable:', e); }}
       }}
 
-      // Schummerung (nutzt dasselbe Hoehenmodell wie der 3D-Modus): macht
-      // Hangrichtung und Gelaendeform sichtbar. Wird zusammen mit 3D
-      // ein-/ausgeschaltet und liegt UNTER allen Datenebenen, damit
-      // Kameras und Baerenpfade lesbar bleiben.
+      // Hillshading uses the same elevation model as the 3D mode and
+      // makes slope direction and landform visible. It is toggled
+      // together with 3D and sits BELOW all data layers so that cameras
+      // and bear paths stay readable.
       if (map.getSource('terrain-dem')) {{
         addLayerSafe({{ id:'hillshade', type:'hillshade', source:'terrain-dem',
           layout:{{ visibility:'none' }},
@@ -375,16 +375,16 @@ def render_japan_map(
           paint:{{'circle-radius':6, 'circle-color':bt.color, 'circle-stroke-width':2, 'circle-stroke-color':'#fff'}} }});
       }});
 
-      // Nach einem Kartenstil-Wechsel sind Terrain und Schummerung weg -
-      // war 3D aktiv, muss es hier wieder gesetzt werden.
+      // A base map change removes terrain and hillshading, so restore
+      // them here if 3D was active.
       if (uiState.terrain3d) applyTerrain(true);
     }}
 
     // -------------------------------------------------------
-    // 3D-Gelaende (uebernommen aus animation_component.py, gleiche
-    // Bedienung und gleiches Fehlerverhalten: schlaegt das Laden der
-    // Hoehendaten fehl, bleibt die Karte in 2D voll nutzbar und der
-    // Schalter springt mit einem Hinweis zurueck)
+    // 3D terrain, taken from animation_component.py with the same
+    // controls and the same failure behaviour: if the elevation data
+    // fails to load, the map stays fully usable in 2D and the toggle
+    // resets itself with a note.
     // -------------------------------------------------------
     const uiState = {{ terrain3d:false }};
 
@@ -401,7 +401,7 @@ def render_japan_map(
           map.easeTo({{ pitch:0, duration:500 }});
         }}
       }} catch (e) {{
-        console.warn('Terrain konnte nicht gesetzt werden:', e);
+        console.warn('Terrain could not be applied:', e);
         showTerrainNote();
       }}
     }}
@@ -414,20 +414,19 @@ def render_japan_map(
       uiState.terrain3d = false;
     }}
 
-    // Fehlende Hoehen-Kacheln melden, ohne die Karte zu blockieren
+    // Report missing elevation tiles without blocking the map
     map.on('error', (e) => {{
       const msg = (e && e.error && e.error.message) || '';
       if (uiState.terrain3d && /terrain|dem|mapterhorn/i.test(msg)) showTerrainNote();
     }});
 
     // -------------------------------------------------------
-    // Kamera-Popups
+    // Camera popups
     //
-    // Bewusst Popup statt Dauerbeschriftung: Bei 20 Kameras, die teils nur
-    // wenige hundert Meter auseinander liegen, ueberlappen sich dauerhafte
-    // Labels im herausgezoomten Zustand und verdecken genau die Baerenpfade,
-    // um die es geht. Beim Aufleuchten waehrend der Animation genuegt ein
-    // Klick, um zu sehen, welche Kamera gerade getroffen wurde.
+    // Popups rather than permanent labels: with 20 cameras, some only a
+    // few hundred metres apart, permanent labels overlap when zoomed out
+    // and cover exactly the bear paths of interest. When a camera lights
+    // up during the animation, one click is enough to identify it.
     // -------------------------------------------------------
     function wireCameraPopups() {{
       map.on('click', 'cameras', (e) => {{
@@ -435,26 +434,26 @@ def render_japan_map(
         if (!f) return;
         const p = f.properties || {{}};
 
-        // Drei Faelle bewusst unterschieden: unbekannt (-1, keine
-        // DB-Verbindung), nachweislich keine Fotos (0) und eine echte Anzahl.
+        // Three cases are distinguished: unknown (-1, no database
+        // connection), demonstrably no photographs (0), and a real count.
         const nPhotos = Number(p.photos);
         let photoLine;
         if (nPhotos < 0) {{
-          photoLine = '<div class="pop-row pop-muted">Fotoanzahl unbekannt (keine DB-Verbindung)</div>';
+          photoLine = '<div class="pop-row pop-muted">Photo count unknown (no database connection)</div>';
         }} else if (nPhotos === 0) {{
-          photoLine = '<div class="pop-row pop-muted">Keine Fotos an dieser Kamera</div>';
+          photoLine = '<div class="pop-row pop-muted">No photographs at this camera</div>';
         }} else {{
-          photoLine = '<div class="pop-row"><b>' + nPhotos + '</b> echte Foto(s) an dieser Kamera</div>';
+          photoLine = '<div class="pop-row"><b>' + nPhotos + '</b> real photograph(s) at this camera</div>';
         }}
 
         const startLine = (p.is_start === true || p.is_start === 'true')
-          ? '<div class="pop-badge">Startkamera dieser Simulation</div>' : '';
+          ? '<div class="pop-badge">Starting camera of this simulation</div>' : '';
 
         new maplibregl.Popup({{ offset: 12, closeButton: true, maxWidth: '260px' }})
           .setLngLat(f.geometry.coordinates)
           .setHTML(
             '<div class="pop">' +
-              '<div class="pop-title">Kamera ' + (p.device_id || '?') + '</div>' +
+              '<div class="pop-title">Camera ' + (p.device_id || '?') + '</div>' +
               startLine +
               '<div class="pop-row pop-mono">' + p.lat + ', ' + p.lng + '</div>' +
               photoLine +
@@ -463,7 +462,7 @@ def render_japan_map(
           .addTo(map);
       }});
 
-      // Zeigefinger, damit erkennbar ist, dass die Punkte anklickbar sind
+      // Pointer cursor so that the markers are recognisably clickable
       map.on('mouseenter', 'cameras', () => {{ map.getCanvas().style.cursor = 'pointer'; }});
       map.on('mouseleave', 'cameras', () => {{ map.getCanvas().style.cursor = ''; }});
     }}
@@ -503,7 +502,7 @@ def render_japan_map(
     }}
 
     // -------------------------------------------------------
-    // Animations-Engine (Mehrfach-Baeren-Variante)
+    // Animation engine (multi-bear variant)
     // -------------------------------------------------------
     const SPEEDS = [1, 10, 60, 300, 1000];
     const animState = {{
@@ -586,7 +585,7 @@ def render_japan_map(
       if (list) {{
         list.innerHTML = animState.loggedDetections.length
           ? animState.loggedDetections.slice(0, 40).map(e => `<div class="log-entry">${{e}}</div>`).join('')
-          : '<div class="log-empty">Noch keine Auslösung</div>';
+          : '<div class="log-empty">No trigger yet</div>';
       }}
     }}
 
@@ -744,7 +743,7 @@ def render_japan_map(
       addSourcesAndLayers();
       fitToData();
       wireBasemapControl();
-      wireCameraPopups();   // haengt an der Karte, nicht am Layer -> ueberlebt Stilwechsel
+      wireCameraPopups();   // bound to the map, not the layer, so it survives style changes
       wireControls();
       initAnimation();
     }});

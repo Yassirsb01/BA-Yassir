@@ -1,24 +1,24 @@
 """
 import_bfn_wolf_lynx.py
 ========================
-Importiert echte Wolf-/Luchs-Vorkommensdaten (besetzte 10x10km Rasterzellen)
-vom Bundesamt fuer Naturschutz (BfN) als GeoJSON-Layer.
+Imports wolf and lynx occurrence data (occupied 10 x 10 km grid cells)
+from the German Federal Agency for Nature Conservation (BfN) as a GeoJSON
+layer.
 
-Quelle: geodienste.bfn.de (INSPIRE-Downloaddienst, kostenfrei nutzbar)
+Source: geodienste.bfn.de (INSPIRE download service, free to use)
         https://geodienste.bfn.de/ogc/wfs/INSPIRE_SD_DE_Luchs_Wolf_distribution
-Datenbasis: Monitoringdaten der Bundeslaender (Wolf 2023/24, Luchs 2019/20),
-            zusammengestellt vom BfN.
+Data basis: monitoring data of the federal states (wolf 2023/24, lynx
+            2019/20), compiled by the BfN.
 
-Verifiziert per GetCapabilities (05.08.2026):
+Verified through GetCapabilities:
   - TypeNames: SD:Vorkommen_-_carnis_lupus__Wolf_
                SD:Vorkommen_-_lynx_lynx__Luchs_
-  - outputFormat "GEOJSON" wird vom Dienst unterstuetzt -> kein GML-Parsing,
-    kein geopandas/GDAL noetig, nur requests + json.
+  - The service supports outputFormat "GEOJSON", so no GML parsing and no
+    geopandas or GDAL are required, only requests and json.
 
-Wichtig: Deutschland hat keine feste Baerenpopulation. Wolf und Luchs sind
-die tatsaechlich systematisch ueberwachten Grossraubtiere hierzulande. Dieser
-Layer bringt also eine neue Tierart ins Kartenportal (nicht "Baer"), passend
-zu Prof. Duennwebers urspruenglichem Hinweis auf die DBBW.
+Context: Germany has no resident bear population. Wolf and lynx are the
+large carnivores that are systematically monitored here, so this layer
+adds a different species to the map rather than another bear dataset.
 """
 
 import json
@@ -35,34 +35,35 @@ TYPE_NAMES = {
 # Farben passend zum bestehenden Schema in maplibre_component.py
 SPECIES_COLOR = {
     "wolf": "#5b3a29",   # braun
-    "luchs": "#8c8c8c",  # grau
+    "luchs": "#8c8c8c",  # grey
 }
 
-# Echte Bounding Box aus der GetCapabilities-Antwort des Dienstes (Deutschland).
-# Dient als Referenz, um eine vertauschte Achsenreihenfolge automatisch zu
-# erkennen und zu reparieren (siehe _fix_coordinate_order unten).
+# Bounding box of Germany, taken from the GetCapabilities response of the
+# service. Used as a reference to detect and repair a swapped axis order
+# automatically (see _fix_coordinate_order below).
 GERMANY_LAT_RANGE = (46.5, 55.5)
 GERMANY_LNG_RANGE = (5.5, 15.5)
 
 
 def _fix_coordinate_order(coords):
     """
-    Manche WFS-Dienste (so auch dieser hier, per Test bestaetigt) liefern
-    Koordinaten trotz outputFormat=GEOJSON in der Reihenfolge [Breite, Laenge]
-    (EPSG:4326-Achsenreihenfolge nach ISO-Norm), statt im GeoJSON-Standard
-    [Laenge, Breite] (RFC 7946). Ohne Korrektur landen die Polygone am
-    falschen Ende der Welt (z.B. Golf von Aden statt Deutschland).
+    Some WFS services, including this one as confirmed by testing, return
+    coordinates in the order [latitude, longitude] (the ISO axis order of
+    EPSG:4326) even with outputFormat=GEOJSON, instead of the GeoJSON
+    standard [longitude, latitude] (RFC 7946). Without correction the
+    polygons end up on the wrong side of the world, for example in the
+    Gulf of Aden instead of Germany.
 
-    Diese Funktion laeuft rekursiv durch ein GeoJSON-'coordinates'-Array
-    (funktioniert fuer Point/LineString/Polygon/MultiPolygon gleichermassen)
-    und vertauscht pro Koordinatenpaar nur dann, wenn die Werte eindeutig
-    zur Deutschland-Bounding-Box passen -> sicher, auch falls ein zukuenftiger
-    Dienst-Update die Reihenfolge von sich aus schon korrekt liefert.
+    This function walks a GeoJSON 'coordinates' array recursively, which
+    works equally for Point, LineString, Polygon and MultiPolygon, and
+    swaps a coordinate pair only when the values unambiguously match the
+    bounding box of Germany. That stays safe if a future service update
+    starts returning the correct order by itself.
     """
     if not coords:
         return coords
 
-    # Einzelnes Koordinatenpaar [a, b]?
+    # A single coordinate pair [a, b]?
     if isinstance(coords[0], (int, float)):
         a, b = coords[0], coords[1]
         a_is_lng = GERMANY_LNG_RANGE[0] <= a <= GERMANY_LNG_RANGE[1]
@@ -75,22 +76,23 @@ def _fix_coordinate_order(coords):
         if a_is_lat and b_is_lng:
             return [b, a]  # vertauscht -> korrigieren
 
-        return coords  # unklar/ausserhalb Deutschlands -> nicht anfassen
+        return coords  # ambiguous or outside Germany, so leave untouched
 
     return [_fix_coordinate_order(c) for c in coords]
 
 
-@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)  # 1x taeglich reicht, Daten aendern sich jaehrlich
+@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)  # once a day is enough; the data changes yearly
 def fetch_bfn_species_geojson(species: str, timeout: int = 30) -> dict:
     """
-    Holt Vorkommensdaten (Rasterzellen) fuer 'wolf' oder 'luchs' direkt als GeoJSON.
+    Fetch occurrence data (grid cells) for 'wolf' or 'luchs' as GeoJSON.
 
     Returns:
-        GeoJSON FeatureCollection. Bei Fehlern: leere FeatureCollection
-        (Layer bleibt dann einfach leer, statt die App abstuerzen zu lassen).
+        A GeoJSON FeatureCollection. On error an empty FeatureCollection is
+        returned, so the layer simply stays empty instead of crashing the
+        application.
     """
     if species not in TYPE_NAMES:
-        raise ValueError(f"Unbekannte Art '{species}'. Erlaubt: {list(TYPE_NAMES)}")
+        raise ValueError(f"Unknown species '{species}'. Allowed: {list(TYPE_NAMES)}")
 
     params = {
         "SERVICE": "WFS",
@@ -98,9 +100,9 @@ def fetch_bfn_species_geojson(species: str, timeout: int = 30) -> dict:
         "REQUEST": "GetFeature",
         "TYPENAMES": TYPE_NAMES[species],
         "OUTPUTFORMAT": "GEOJSON",
-        # CRS:84 ist von OGC explizit als "immer Laenge,Breite" definiert -
-        # anders als EPSG:4326, das nach ISO-Achsenreihenfolge eigentlich
-        # Breite,Laenge waere (der eigentliche Grund fuer den Bug).
+        # CRS:84 is explicitly defined by the OGC as always being
+        # longitude, latitude, unlike EPSG:4326, whose ISO axis order is
+        # latitude, longitude. That mismatch is the root of the problem.
         "SRSNAME": "CRS:84",
     }
 
@@ -109,15 +111,15 @@ def fetch_bfn_species_geojson(species: str, timeout: int = 30) -> dict:
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        print(f"[BfN WFS] Fehler beim Abruf ({species}): {e}")
+        print(f"[BfN WFS] Request failed ({species}): {e}")
         return {"type": "FeatureCollection", "features": []}
 
-    # Farbe + einheitliches "species"-Feld in die properties einbetten,
-    # damit die Karte (wie bei Carpathian/Simulation) per ['get','color']
-    # faerben kann, ohne clientseitige Sonderfaelle.
-    # Zusaetzlich: Achsenreihenfolge defensiv korrigieren (siehe oben) - auch
-    # wenn CRS:84 den Fehler beheben sollte, schadet die Sicherheitspruefung
-    # nicht und faengt es ab, falls der Dienst sich anders verhaelt.
+    # Embed the colour and a uniform "species" field into the properties,
+    # so the map can colour the features through ['get','color'] exactly as
+    # it does for the Carpathian and simulation layers, with no client-side
+    # special cases. The axis order is additionally corrected defensively
+    # (see above): CRS:84 should already fix it, but the check costs
+    # nothing and catches a service that behaves differently.
     features = data.get("features", [])
     for f in features:
         props = f.setdefault("properties", {})
@@ -134,9 +136,9 @@ def fetch_bfn_species_geojson(species: str, timeout: int = 30) -> dict:
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
 def get_wolf_lynx_geojson() -> dict:
     """
-    Kombinierter Layer: Wolf + Luchs in einer FeatureCollection.
-    So passt es 1:1 in das bestehende GROUPS-Muster in maplibre_component.py
-    (ein Source, ein Layer, Farbe kommt aus den properties).
+    Combined layer with wolf and lynx in a single FeatureCollection, which
+    fits the existing GROUPS pattern in maplibre_component.py directly: one
+    source, one layer, colour taken from the properties.
     """
     wolf = fetch_bfn_species_geojson("wolf")
     luchs = fetch_bfn_species_geojson("luchs")
@@ -147,19 +149,19 @@ def get_wolf_lynx_geojson() -> dict:
 
 
 if __name__ == "__main__":
-    # Standalone-Test ausserhalb von Streamlit. st.cache_data funktioniert
-    # auch ohne laufende Streamlit-App als normaler Funktionsaufruf (nur
-    # ohne die Streamlit-typische Spinner-UI).
-    print("Hole Wolf-Daten...")
+    # Standalone check outside Streamlit. st.cache_data also works without
+    # a running Streamlit app, behaving like a plain function call without
+    # the spinner UI.
+    print("Fetching wolf data...")
     wolf_fc = fetch_bfn_species_geojson("wolf")
 
     n = len(wolf_fc.get("features", []))
-    print(f"Wolf-Rasterzellen erhalten: {n}")
+    print(f"Wolf grid cells received: {n}")
 
     if n > 0:
-        print("\nErstes Feature (zur Kontrolle der echten Property-Namen):")
+        print("\nFirst feature (to check the actual property names):")
         print(json.dumps(wolf_fc["features"][0], indent=2, ensure_ascii=False)[:1500])
 
     with open("bfn_wolf_test.geojson", "w", encoding="utf-8") as f:
         json.dump(wolf_fc, f, ensure_ascii=False)
-    print("\nGespeichert als bfn_wolf_test.geojson zur Kontrolle (z.B. auf geojson.io ansehen).")
+    print("\nWritten to bfn_wolf_test.geojson for inspection, for example on geojson.io.")

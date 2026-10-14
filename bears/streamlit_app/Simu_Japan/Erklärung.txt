@@ -27,14 +27,16 @@ Das ist buchstäblich die ganze Idee. Kein komplizierterer Gedanke dahinter, nur
 
 Schritt 4: Warum nicht einfach eine Zahl reicht (Bild „4")
 
-52 echte Fotos sind wenig. Hättet ihr durch Zufall 5 andere Fotos erwischt, wäre Δ vielleicht 0,58 statt 0,63 herausgekommen. Um zu zeigen, wie stark das Ergebnis vom Zufall der Stichprobe abhängt, macht man Folgendes: Aus den vorhandenen Daten wird mit Zurücklegen neu gezogen (manche Fotos also mehrfach, andere gar nicht) – so, als hätte man die Beobachtung leicht anders wiederholt – und Δ wird neu berechnet. Das passiert 1000 Mal.
+50 echte Fotos sind wenig. Hättet ihr durch Zufall 5 andere Fotos erwischt, wäre Δ vielleicht 0,57 statt 0,615 herausgekommen. Um zu zeigen, wie stark das Ergebnis vom Zufall der Stichprobe abhängt, macht man Folgendes: Aus den vorhandenen Daten wird mit Zurücklegen neu gezogen (manche Fotos also mehrfach, andere gar nicht) – so, als hätte man die Beobachtung leicht anders wiederholt – und Δ wird neu berechnet. Das passiert 1000 Mal.
 
 Das Histogramm im Bild zeigt das Ergebnis: eine Glockenform um den echten Δ-Wert herum. Die roten Linien schneiden die mittleren 95 % dieser 1000 Werte ab – das ist euer Konfidenzintervall. Es sagt: "Selbst wenn die Stichprobe leicht anders ausgefallen wäre, läge Δ mit hoher Wahrscheinlichkeit in diesem Bereich."
 
 Euer echtes Ergebnis, damit erklärt
 
-Δ = 0,63, mit 95-%-Bereich [0,55, 0,69].
+Δ = 0,615, mit 95-%-Bereich [0,528, 0,683].
 
-Übersetzt: Die simulierten und die echten Aktivitätszeiten überlappen sich zu etwas mehr als der Hälfte – deutlich mehr als Zufall (das wäre nahe 0), aber auch klar nicht perfekt (das wäre nahe 1). Und weil das Intervall recht schmal ist (0,55 bis 0,69, nicht z.B. 0,2 bis 0,9), ist das Ergebnis trotz der kleinen Stichprobe nicht bloß Zufall – es steht auf einigermaßen stabilem Boden.
+(Stand 02.10.2026, neu gerechnet: 50 echte Detektionen, 1958 virtuelle aus 300 Läufen à 48 h, ohne Geländegewichtung. Der frühere Wert 0,63 mit [0,55, 0,69] stammte aus einem Lauf mit 52 echten Detektionen; die Verschiebung liegt tief innerhalb des alten Intervalls, die Aussage ändert sich dadurch nicht.)
+
+Übersetzt: Die simulierten und die echten Aktivitätszeiten überlappen sich zu etwas mehr als der Hälfte – deutlich mehr als Zufall (das wäre nahe 0), aber auch klar nicht perfekt (das wäre nahe 1). Und weil das Intervall recht schmal ist (0,528 bis 0,683, nicht z.B. 0,2 bis 0,9), ist das Ergebnis trotz der kleinen Stichprobe nicht bloß Zufall – es steht auf einigermaßen stabilem Boden.
 
 Fürs Seminar, falls gefragt wird "was heißt das jetzt fachlich": Ein rumänisches Braunbär-Bewegungsmuster erklärt gut die Hälfte des zeitlichen Musters japanischer Kragenbär-Auslösungen – ein Teil der Übereinstimmung geht vermutlich auf tatsächlich ähnliche biologische Rhythmen zurück (beide Arten sind überwiegend dämmerungs-/nachtaktiv), der Rest der Abweichung auf die echten Unterschiede zwischen den Arten und Lebensräumen.

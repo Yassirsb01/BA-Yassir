@@ -15,7 +15,6 @@ Color upgrade:
 import os
 import calendar
 from datetime import datetime
-import hashlib
 import colorsys
 
 import streamlit as st
@@ -31,39 +30,40 @@ from wildlife_db_mariadb import WildlifeDatabase
 # =========================
 # Saison-Erklaerung
 # =========================
-# Die Saisonwerte im Carpathian-Datensatz (Spalte Season2) sind KEINE
-# Kalenderjahreszeiten, sondern biologische Jahresphasen des Braunbaeren.
-# Fuer Aussenstehende ist "Hyperphagia" oder "Forest fruits" ohne Erklaerung
-# nicht deutbar - deshalb hier einmal zentral hinterlegt und von allen drei
-# Filtern (map.py, pages/2_Experimente.py, Carpathian-Tab) genutzt, damit
-# der Text nicht dreifach gepflegt werden muss.
+# The season values in the Carpathian dataset (column Season2) are NOT
+# calendar seasons but biological annual phases of the brown bear. Terms
+# such as "Hyperphagia" or "Forest fruits" are not interpretable without
+# explanation, so the text is defined once here and used by all three
+# filters (map.py, pages/2_Experiments.py and the Carpathian tab) instead
+# of being maintained in three places.
 #
-# Die Monatsangaben sind aus den Daten selbst ermittelt (1_bears_RO.csv,
-# 59997 Punkte) und bewusst als Spanne formuliert: die Phasen sind an das
-# Verhalten des einzelnen Baeren gebunden, nicht an feste Kalenderdaten,
-# deshalb ueberlappen sich die Randmonate.
+# The month ranges were measured from the data itself (1_bears_RO.csv,
+# 59,997 fixes) and are deliberately given as ranges: the phases depend on
+# the behaviour of the individual bear rather than on fixed calendar
+# dates, which is why the boundary months overlap.
 SEASON_DESCRIPTIONS = {
     "Winter sleep":
-        "Winterruhe (etwa Nov–März): Bär in der Höhle, kaum Ortswechsel.",
+        "Winter dormancy (roughly Nov-Mar): the bear stays in the den and "
+        "barely changes location.",
     "Den exit and reproduction":
-        "Höhlenausgang und Paarungszeit (etwa März–Juni): Bär verlässt die "
-        "Höhle, große Streifgebiete durch die Partnersuche.",
+        "Den exit and mating season (roughly Mar-Jun): the bear leaves the "
+        "den and ranges widely while searching for a mate.",
     "Forest fruits":
-        "Waldfrüchte (etwa Juni–Aug): Beeren und Früchte reifen, "
-        "Nahrungssuche kleinräumig im Wald.",
+        "Forest fruits (roughly Jun-Aug): berries and fruit ripen and "
+        "foraging is concentrated within the forest.",
     "Hyperphagia":
-        "Hyperphagie (etwa Aug–Nov): stark gesteigerte Nahrungsaufnahme zum "
-        "Aufbau der Fettreserven vor der Winterruhe, höchste Aktivität.",
+        "Hyperphagia (roughly Aug-Nov): greatly increased food intake to "
+        "build fat reserves before dormancy; the most active phase.",
 }
 
 SEASON_HELP = (
-    "Keine Kalenderjahreszeiten, sondern **biologische Jahresphasen des "
-    "Braunbären** aus dem Carpathian-Datensatz (Spalte `Season2`):\n\n"
-    + "\n".join(f"- **{name}** – {text}" for name, text in SEASON_DESCRIPTIONS.items())
-    + "\n\nWozu der Filter: Aktivität und Bewegungsmuster unterscheiden sich "
-      "zwischen den Phasen erheblich. Die Einschränkung auf eine Phase "
-      "vergleicht Vergleichbares – etwa nur die Hyperphagie, in der Bären "
-      "am weitesten wandern."
+    "Not calendar seasons but **biological annual phases of the brown "
+    "bear**, taken from the Carpathian dataset (column `Season2`):\n\n"
+    + "\n".join(f"- **{name}** - {text}" for name, text in SEASON_DESCRIPTIONS.items())
+    + "\n\nPurpose of the filter: activity and movement patterns differ "
+      "considerably between the phases. Restricting the data to one phase "
+      "compares like with like, for example only hyperphagia, during which "
+      "bears travel furthest."
 )
 
 
@@ -307,22 +307,16 @@ def _rgb_to_hex(r: float, g: float, b: float) -> str:
     return "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
 
 
-def _seed_from_id(bear_id: str) -> int:
-    # stable seed
-    h = hashlib.sha1(str(bear_id).encode("utf-8")).hexdigest()
-    return int(h[:8], 16)
-
-
 def _build_unique_color_map(bear_ids: list[str]) -> dict[str, str]:
     """
-    Eindeutige, MAXIMAL unterscheidbare Farbe pro bear_id.
+    A unique, maximally distinguishable colour per bear_id.
 
-    Statt Hash-basierter Farbtoene (die zu Clustern fuehren, z. B. lauter
-    aehnliche Gruentoene) verteilen wir die Farbtoene GLEICHMAESSIG ueber den
-    Farbkreis nach dem Index des Baeren. Zusaetzlich variieren wir Helligkeit
-    und Saettigung im Wechsel, damit auch benachbarte Farbtoene klar getrennt sind.
+    Instead of hash-based hues, which tend to cluster into many similar
+    shades, the hues are distributed EVENLY around the colour wheel by the
+    index of the bear. Lightness and saturation alternate in addition, so
+    that even neighbouring hues stay clearly distinguishable.
 
-    Deterministisch: gleiche bear_ids -> gleiche Farben.
+    Deterministic: the same bear_ids always yield the same colours.
     """
     ids = sorted(set([str(x) for x in bear_ids]))
     n = max(1, len(ids))
@@ -480,9 +474,9 @@ def _maplibre_html(
     # Build layer toggle HTML depending on active mode
     toggle_html = '<div class="row" style="margin-top:10px;font-weight:600;font-size:12px;">Layer</div>'
     if mode == "paths":
-        toggle_html += '<label><input type="checkbox" id="tog-paths" checked/><span class="lsym" style="background:#888;height:3px;border-radius:2px;"></span>Pfade</label>'
+        toggle_html += '<label><input type="checkbox" id="tog-paths" checked/><span class="lsym" style="background:#888;height:3px;border-radius:2px;"></span>Paths</label>'
     if mode in ("paths", "daily") and show_points:
-        toggle_html += '<label><input type="checkbox" id="tog-points" checked/><span class="lsym" style="background:#888;border-radius:50%;"></span>Punkte</label>'
+        toggle_html += '<label><input type="checkbox" id="tog-points" checked/><span class="lsym" style="background:#888;border-radius:50%;"></span>Points</label>'
     if mode == "heat":
         toggle_html += '<label><input type="checkbox" id="tog-heat" checked/><span class="lsym" style="background:linear-gradient(#f00,#ff0);border-radius:2px;"></span>Heatmap</label>'
 
@@ -916,7 +910,7 @@ def _build_tracking_csv(
 
 
 # =========================
-# GeoJSON fuer die gemeinsame Hauptkarte (map.py)
+# GeoJSON for the shared main map (map.py)
 # =========================
 @st.cache_data(show_spinner=False)
 def get_carpathian_geojson(
@@ -928,10 +922,10 @@ def get_carpathian_geojson(
     max_points_per_bear=3000,
 ):
     """
-    Liefert GeoJSON fuer die Carpathian-Daten als dict:
+    Return GeoJSON for the Carpathian data as a dict:
         {"points": FeatureCollection, "paths": FeatureCollection}
-    Nutzt dieselben Funktionen wie der bestehende Carpathian-Tab.
-    DB-first, CSV-Fallback automatisch.
+    Uses the same functions as the Carpathian tab. The database is tried
+    first, with an automatic fallback to the CSV files.
     """
     empty = {"type": "FeatureCollection", "features": []}
 
@@ -973,8 +967,8 @@ def get_carpathian_geojson(
 
 def get_carpathian_options():
     """
-    Liefert (bears_list, seasons, min_date, max_date) fuer die Sidebar-Filter.
-    DB-first, CSV-Fallback.
+    Return (bears_list, seasons, min_date, max_date) for the sidebar
+    filters. Database first, CSV fallback.
     """
     default_seasons = ["Winter sleep", "Den exit and reproduction", "Forest fruits", "Hyperphagia"]
     bears_df = _db_get_bears_list_cached()
@@ -1012,8 +1006,9 @@ def display_carpathian_bears_section():
     if bears_df is None or bears_df.empty:
         using_csv = True
         st.info(
-            "📌 Lokaler Modus: Keine DB-Daten gefunden (oder keine Verbindung). "
-            "Ich lade Carpathian-Daten automatisch aus den CSV-Dateien im Projekt."
+            "Local mode: no database records found, or no connection. "
+            "Carpathian data is loaded automatically from the CSV files in "
+            "the project."
         )
         tracking_csv_cache = _load_carpathian_csv_tracking_cached()
         bears_df = _csv_get_bears_list(tracking_csv_cache)
@@ -1229,8 +1224,9 @@ def display_carpathian_bears_section():
                         st.dataframe(tracking_data[show_cols].head(300))
 
         st.caption(
-            "Hinweis: Label-Sprache funktioniert nur bei Vector-Styles (z. B. MapLibre Demo Vector). "
-            "Raster-Karten (OSM/Carto/Esri) haben fest eingebrannte Labels."
+            "Note: label language only applies to vector styles, for example "
+            "MapLibre Demo Vector. Raster maps (OSM, Carto, Esri) carry labels "
+            "baked into the tiles."
         )
 
     # =========================
@@ -1239,16 +1235,16 @@ def display_carpathian_bears_section():
     with tabs[1]:
         st.header("Home Range Analysis")
         if using_csv:
-            st.info("Home Range Analysis benötigt DB-Tabellen (MCP/KDE). Im CSV-Modus ist dieser Tab deaktiviert.")
+            st.info("Home range analysis requires database tables (MCP/KDE). This tab is disabled in CSV mode.")
         else:
-            st.info("DB verfügbar: Hier kannst du deine bestehenden Home-Range-Auswertungen wieder einbauen.")
+            st.info("Database available: existing home range analyses can be plugged in here.")
 
     with tabs[2]:
         st.header("Seasonal Movement Patterns")
         if using_csv:
-            st.info("Seasonal Patterns benötigen DB-Tabellen. Im CSV-Modus ist dieser Tab deaktiviert.")
+            st.info("Seasonal patterns require database tables. This tab is disabled in CSV mode.")
         else:
-            st.info("DB verfügbar: Hier kannst du deine bestehenden Seasonal-Auswertungen wieder einbauen.")
+            st.info("Database available: existing seasonal analyses can be plugged in here.")
 
     with tabs[3]:
         st.header("Data Explorer")
@@ -1260,19 +1256,19 @@ def display_carpathian_bears_section():
             else:
                 st.warning("CSV cache ist leer.")
         else:
-            st.info("DB-Modus: Du kannst hier deine DB-Explorer-Queries wie früher anzeigen.")
+            st.info("Database mode: database explorer queries can be shown here.")
 
     with tabs[4]:
         st.header("About")
         st.markdown(
             """
-**Unique Farben pro Bär**
-- Jede bear_id bekommt **eine eindeutige Farbe** in der aktuellen Ansicht (keine Duplikate).
-- Wenn ein neuer Bär in der DB auftaucht, bekommt er automatisch eine neue freie Farbe.
+**Unique colour per bear**
+- Every bear_id receives **one unique colour** in the current view, with no duplicates.
+- A bear newly appearing in the database is automatically assigned a free colour.
 
 **Performance**
-- Apply-Button (Form) verhindert Rerun-Spam.
-- Cache + Downsampling reduzieren Ladezeit stark.
+- The Apply button (inside a form) prevents excessive reruns.
+- Caching and downsampling substantially reduce load time.
 """
         )
 

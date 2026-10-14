@@ -1,93 +1,308 @@
-# Multi-Layer Visualsierung von Tiersichtungsdaten in einer Online Kartenplattform
+# Wildlife Movement Analysis System
 
+Eine Streamlit-Anwendung, die drei bisher getrennte Teilsysteme der
+Bärenforschung auf **einer gemeinsamen Karte** zusammenführt und um zwei
+Experimente zur Bewegungssimulation erweitert.
 
+> **Hinweis zur Sprache:** Quelltext und Benutzeroberfläche sind
+> vollständig auf Englisch. Diese README und `ANPASSUNGEN.md` sind bewusst
+> auf Deutsch gehalten; sie richten sich an die Betreuung, nicht an die
+> Anwendung.
 
-## Getting started
+---
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## 1. Was das System tut
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+| Teilsystem | Inhalt |
+|---|---|
+| **Japan Bear Deterrent** | Abschreckungsgeräte, Kamerastandorte, Kamerabilder, frei gezeichnete Marker und Gebiete (Vorarbeit Marcel Lorenz) |
+| **Carpathian Bears** | GPS-Halsbanddaten von 13 Braunbären in den rumänischen Karpaten, 59 997 Ortungen von August 2011 bis Juli 2015 |
+| **Bewegungssimulation** | Schritt-Simulation auf Basis empirischer Schrittlängen (Vorarbeit Fabian Bräu) |
+| **Externe Vergleichsdaten** | Wolf- und Luchsvorkommen des BfN, Bärensichtungen aus GBIF |
 
-## Add your files
+Dazu zwei Analyse-Seiten:
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+**Experiments** — Animation eines Bären an einem Tag. Die echte GPS-Spur und
+mehrere simulierte Bären laufen auf derselben Zeitachse nebeneinander. Jeder
+simulierte Pfad ist eine Zufallsziehung aus dem Modell, keine Vorhersage;
+über einen Seed ist jeder Lauf exakt reproduzierbar.
+
+**Japan Experiment** — Übertragung der in Rumänien gemessenen
+Bewegungsmuster auf die japanische Kameralandschaft. Simulierte Bären
+starten an einem echten Foto-Ereignis; echte Auslösezeiten erscheinen als
+rote Marken auf derselben Zeitleiste. Darunter eine aggregierte Statistik
+über viele Läufe (Überlappungskoeffizient mit Bootstrap-Konfidenzintervall).
+
+---
+
+## 2. Installation
+
+Voraussetzung: **Python 3.14.3** (getestet unter Windows 11; ältere 3.1x
+sollten laufen, sind aber nicht geprüft).
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+source .venv/bin/activate       # Linux, macOS
+
+pip install -r requirements.txt
+```
+
+`requirements-dev.txt` wird **nicht** benötigt. Darin stehen nur Pakete für
+Module der ursprünglichen Simulation, die die Anwendung nicht lädt
+(`hdbscan`, `scikit-learn`, `scipy`, `dash`, `folium`). Begründung in
+`ANPASSUNGEN.md`, Punkt 7.
+
+## 3. Starten
+
+```bash
+streamlit run map.py
+```
+
+Die Anwendung öffnet sich im Browser. Links in der Seitenleiste stehen die
+Filter, die Layer werden direkt **auf der Karte** oben links an- und
+abgehakt. Die beiden Experiment-Seiten erreicht man über die
+Seitennavigation.
+
+---
+
+## 4. Abhängigkeiten zur Laufzeit
+
+| Was | Wofür | Ohne? |
+|---|---|---|
+| **OTH-VPN** | MariaDB `ursus`: Kamerabilder, Foto-Zeitstempel, Marker und Gebiete | Anwendung startet trotzdem; Carpathian-Daten kommen aus CSV, Simulation läuft vollständig, nur die DB-Inhalte fehlen |
+| **Internet** | Kartenkacheln (Esri, OpenFreeMap, Carto), Höhenmodell (Mapterhorn), BfN-WFS, GBIF | Karte bleibt leer bzw. ohne 3D; die Simulation selbst braucht kein Internet |
+| **Overpass API** | Nur beim Vorabladen der Geländedaten | Siehe Abschnitt 5 |
+
+Die Anwendung ist durchgehend so gebaut, dass eine fehlende Verbindung zu
+einer **Warnung** führt und nicht zu einem Absturz.
+
+---
+
+## 5. Geländedaten vorab laden
+
+Die Geländegewichtung der Simulation bewertet OpenStreetMap-Daten. Würde
+sie bei jedem Simulationsschritt live abgefragt, wären das tausende
+Overpass-Anfragen pro Lauf. Stattdessen wird das Kameragebiet **einmalig**
+heruntergeladen und lokal gerastert:
+
+```bash
+python tools/prefetch_terrain.py
+```
+
+Ergebnis: `bear_simulation/data/terrain_cache.db` (rund 5 MB, etwa 20 000
+Rasterzellen à 150 m). Danach stellt die Simulation in diesem Gebiet
+**keine** Internet-Anfragen mehr.
+
+Falls Python die Overpass-Server nicht erreicht, ein Browser aber schon:
+
+```bash
+python tools/prefetch_terrain.py --print-query
+# Abfrage auf https://overpass-turbo.eu ausführen,
+# "Export" -> "Rohdaten" als JSON speichern, dann:
+python tools/prefetch_terrain.py --from-file terrain.json
+```
+
+Der Schreibvorgang ist atomar: erst in eine Kopie, dann `PRAGMA
+quick_check`, dann ersetzen. Ein Abbruch lässt die alte, funktionierende
+Datei unangetastet.
+
+**Bekannte Einschränkung:** Das vorberechnete Gebiet umfasst die
+Kamerastandorte plus 5 km Puffer. Bei Simulationsläufen über 48 Stunden
+verlassen Bären dieses Gebiet, und die Geländegewichtung schaltet sich dann
+still ab. Für belastbare Läufe über 24 Stunden hinaus muss der Puffer
+vergrößert werden (`--buffer-km`).
+
+---
+
+## 6. Vor dem Deployment an der OTH
+
+Die folgenden Punkte sind **vor** dem Ausrollen zu klären. Sie sind nach
+Dringlichkeit sortiert.
+
+### 6.1 Zugangsdaten aus dem Quelltext nehmen — kritisch
+
+Die MariaDB-Zugangsdaten standen bisher im Klartext in
+`wildlife_db_mariadb.py` und liegen damit in der Git-Historie. Das Modul
+liest sie jetzt aus Umgebungsvariablen und fällt nur dann auf die alten
+Werte zurück, wenn keine gesetzt sind:
+
+```bash
+set WILDLIFE_DB_HOST=...
+set WILDLIFE_DB_PORT=3306
+set WILDLIFE_DB_USER=...
+set WILDLIFE_DB_PASSWORD=...
+set WILDLIFE_DB_NAME=ursus
+```
+
+Zu erledigen:
+
+1. Auf dem Zielsystem die Variablen setzen (oder `.streamlit/secrets.toml`
+   nutzen, bereits in `.gitignore`).
+2. Die Rückfallwerte in `wildlife_db_mariadb.py` entfernen, sobald das
+   steht — sonst bleibt das Passwort im Quelltext.
+3. **Das Passwort ändern.** Es war im Repository sichtbar und muss als
+   kompromittiert gelten, auch nach dem Entfernen aus dem Code: die
+   Git-Historie enthält es weiterhin.
+
+### 6.2 Netzwerkfreigaben prüfen
+
+Der Server braucht ausgehenden Zugriff auf:
+
+| Ziel | Zweck | Ohne |
+|---|---|---|
+| `172.20.39.9:3306` | MariaDB | keine Bilder, Marker, Foto-Zeitstempel |
+| `server.arcgisonline.com`, `tiles.openfreemap.org`, `basemaps.cartocdn.com` | Kartenkacheln | Karte bleibt grau |
+| `tiles.mapterhorn.com` | Höhenmodell für 3D | 3D-Schalter meldet "nicht erreichbar", 2D funktioniert |
+| `geodienste.bfn.de` | Wolf- und Luchsdaten | Layer bleibt leer, Warnung in der Seitenleiste |
+| `api.gbif.org` | Bärensichtungen | dito |
+| `overpass-api.de` u. a. | nur für `tools/prefetch_terrain.py` | nicht nötig, wenn der Cache mitgeliefert wird |
+
+Die Kartenkacheln lädt **der Browser des Nutzers**, nicht der Server. Wenn
+der Server abgeschottet ist, die Clients aber Internet haben, funktionieren
+die Karten trotzdem.
+
+### 6.3 Datendateien mitliefern
+
+Diese Dateien sind für den Betrieb nötig, stehen aber teilweise in
+`.gitignore` und kommen deshalb **nicht** automatisch mit:
+
+| Datei / Ordner | Größe | Status |
+|---|---|---|
+| `bear_simulation/data/database.db` | 4,4 MB | im Repository |
+| `bear_simulation/data/terrain_cache.db` | 5,5 MB | **ignoriert** — mitkopieren oder neu erzeugen |
+| `data/animal_data/carpathian_bears/*.csv` | ca. 9 MB | im Repository, dient als Fallback ohne DB |
+| `data/` gesamt | ca. 70 MB | enthält Bilder und Gebietsdaten |
+| `bear_simulation/data/terrain_prefetch_raw/` | 29 MB | **ignoriert**, nur zum Neuerzeugen des Caches nötig |
+
+Ohne `terrain_cache.db` läuft die Anwendung, aber die Geländegewichtung
+schaltet sich beim ersten Lauf ab (mit Hinweis in der Oberfläche).
+
+### 6.4 Streamlit-Konfiguration
+
+Für den Serverbetrieb in `.streamlit/config.toml`:
+
+```toml
+[server]
+headless = true
+port = 8501
+address = "0.0.0.0"
+enableCORS = false
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false
+```
+
+**Wichtig bei Betrieb hinter einem Reverse Proxy:** Die Karte schreibt
+ihren Zustand (Kartenausschnitt, Zoom, sichtbare Layer) in die URL des
+umgebenden Fensters und löst beim Speichern neuer Marker eine echte
+Navigation aus. Das funktioniert nur, wenn iframe und Seite **dieselbe
+Origin** haben. Bei einem Proxy mit abweichender Domain schlägt das fehl —
+die Karte bleibt nutzbar, aber Zustandserhalt und das Zeichnen neuer
+Marker funktionieren nicht mehr. Vor dem Ausrollen testen.
+
+### 6.5 Funktionsprüfung nach dem Ausrollen
+
+```bash
+python tests/smoke_test.py
+```
+
+16 Prüfungen, läuft ohne Datenbank und ohne Netzwerk. Erwartete Ausgabe:
+`16 of 16 checks passed`. Der Test vergleicht unter anderem Hash-Werte der
+simulierten Pfade und schlägt an, wenn sich das Verhalten der Simulation
+verändert hat.
+
+Danach manuell prüfen: Hauptkarte lädt, beide Experiment-Seiten laden, ein
+Simulationslauf startet, die 3D-Schalter reagieren.
+
+### 6.6 Nicht benötigt
+
+- `hdbscan` und `scikit-learn` werden **nicht** gebraucht. Die
+  Integrationsschicht umgeht die Cluster-Analyse der ursprünglichen
+  Simulation bewusst (`ANPASSUNGEN.md`, Punkt 7).
+- Der Ordner `_archiv/` enthält einmalige Migrations- und Prüfskripte sowie
+  abgelöste Artefakte. Er wird nicht ausgeliefert.
+
+---
+
+## 7. Projektstruktur
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.oth-regensburg.de/sby30918/Wildlife.git
-git branch -M main
-git push -uf origin main
+streamlit_app/
+  map.py                        Einstiegspunkt, gemeinsame Hauptkarte
+  pages/
+    2_Experiments.py            Animation echt vs. simuliert (Karpaten)
+    3_Japan_Experiment.py       Übertragung auf die Japan-Kameras
+
+  maplibre_component.py         Hauptkarte (MapLibre, Layer, Zeichnen)
+  animation_component.py        Animationskarte Karpaten
+  japan_map_component.py        Animationskarte Japan
+
+  carpathian_bears.py           GPS-Daten, DB-first mit CSV-Fallback
+  japan_deterrents.py           Geräte, Bilder, Marker, Gebiete
+  wildlife_db_mariadb.py        Datenzugriffsschicht MariaDB
+  new_images_checker.py         Erkennung neuer Bilder
+  status_widget.py              Statusanzeige in der Seitenleiste
+  geojson_table_helper.py       GeoJSON zu Tabelle
+
+  sync_simulation.py            Synchrone echte und simulierte Bewegung
+  japan_comparison.py           Simulation ab Kamerastandort, Richtungswahl
+  activity_overlap.py           Tagesrhythmus-Vergleich, Bootstrap
+  terrain_cache.py              Lokaler OpenStreetMap-Geländecache
+
+  import_bfn_wolf_lynx.py       Wolf- und Luchsdaten vom BfN
+  import_gbif_bears.py          Bärensichtungen aus GBIF
+
+  bear_simulation/              Vorarbeit Fabian Bräu, unverändert,
+                                plus eigene Integrationsschicht __init__.py
+  tools/prefetch_terrain.py     Geländedaten einmalig vorab laden
+  tests/smoke_test.py           Regressionstest, 16 Prüfungen
+  tests/direction_distribution_test.py
+                                Messungen zur Richtungswahl
+  docs/                         Referenzliteratur (nicht im Repository)
+  _archiv/                      abgelegte Skripte, nicht ausliefern
+
+  ANPASSUNGEN.md                Abweichungen von der Vorarbeit, mit Messungen
 ```
 
-## Integrate with your tools
+### Konventionen für Konsolenausgaben
 
-* [Set up project integrations](https://gitlab.oth-regensburg.de/sby30918/Wildlife/-/settings/integrations)
+- `[ok]`, `[note]`, `[warning]`, `[error]` für Ausgaben von Skripten
+- `[modulname]` für Diagnosemeldungen einzelner Module, etwa
+  `[terrain_cache]` oder `[GBIF]`
 
-## Collaborate with your team
+---
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+## 8. Hinweise zur Interpretation
 
-## Test and Deploy
+Zwei Punkte, die bei der Beurteilung der Ergebnisse zählen:
 
-Use the built-in continuous integration in GitLab.
+**Simulierte Pfade sind keine Vorhersagen.** Jeder Pfad ist eine
+Zufallsziehung aus dem Bewegungsmodell. Deshalb werden standardmäßig
+mehrere gleichzeitig gezeichnet: aussagekräftig ist ihre Streuung, nicht
+die einzelne Linie.
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+**Artunterschied.** Die japanischen Kameras stehen im Verbreitungsgebiet
+des Asiatischen Schwarzbären (*Ursus thibetanus*), das Bewegungsmodell
+stammt vom Europäischen Braunbären (*Ursus arctos*). Das ist eine bewusste
+methodische Vereinfachung und keine Gleichsetzung.
 
-***
+Weitere Einschränkungen, jeweils mit Messwerten, stehen in
+`ANPASSUNGEN.md`.
 
-# Editing this README
+---
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+## 9. Vorarbeiten
 
-## Suggestions for a good README
+Das System baut auf drei studentischen Arbeiten auf:
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+- **Marcel Lorenz** — Japan Bear Deterrent System
+- **Fabian Bräu** — Bewegungssimulation Karpaten (`bear_simulation/`)
+- **Anthony Lelchat** — Bildextraktion aus E-Mail-Postfächern
 
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Die Richtungswahl der Simulation übernimmt das Verfahren aus
+J. Geyer, M. Melzer, J. Dünnweber, A. Sarkar, *Human Step Movement
+Imitation for Training Privacy-Aware Intelligent Environments*, IEEE,
+Abschnitt III-B, Formel (1). Details und Abgrenzung in `ANPASSUNGEN.md`,
+Punkt 8.

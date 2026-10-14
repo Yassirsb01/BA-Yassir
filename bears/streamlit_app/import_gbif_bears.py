@@ -1,24 +1,22 @@
 """
 import_gbif_bears.py
 =====================
-Importiert echte Braunbaer-Sichtungsdaten (Ursus arctos) aus der GBIF
-Occurrence API - weltweite, kostenfreie Biodiversitaetsdatenbank.
+Imports brown bear sighting records (Ursus arctos) from the GBIF
+Occurrence API, a free global biodiversity database.
 
-Quelle: https://api.gbif.org/v1/occurrence/search (stabile, oeffentliche
-        REST-API, kein API-Key noetig, JSON-Antworten)
+Source: https://api.gbif.org/v1/occurrence/search (stable public REST API,
+        no API key required, JSON responses)
 
-Nutzen fuer dieses Projekt:
-  - Deutschland: seltene einzelne "Problembaeren" (keine feste Population,
-    daher erwartbar sehr wenige/keine Datensaetze)
-  - Rumaenien: zusaetzliche, unabhaengige Meldedaten als Vergleich/Ergaenzung
-    zu den eigenen Carpathian-GPS-Trackingdaten
+Purpose in this project:
+  - Germany: the occasional individual bear. There is no resident
+    population, so very few records are expected.
+  - Romania: additional, independent reports as a comparison and
+    supplement to the project's own Carpathian GPS tracking data.
 
-Verifiziert per Live-Abruf (05.08.2026): Endpoint + Antwortstruktur (Felder
-wie decimalLatitude/decimalLongitude/scientificName/eventDate/gbifID/country)
-sind uebereinstimmend mit der offiziellen GBIF-API-Dokumentation. Die genaue
-Trefferzahl fuer Ursus arctos in DE/RO konnte im Sandbox-Test nicht gefiltert
-abgerufen werden (Netzwerk-Einschraenkung) - bitte beim ersten echten Lauf
-kurz pruefen, wie viele Datensaetze tatsaechlich zurueckkommen.
+Verified against the live service: the endpoint and the response structure
+(fields such as decimalLatitude, decimalLongitude, scientificName,
+eventDate, gbifID and country) match the official GBIF API
+documentation.
 """
 
 import json
@@ -29,7 +27,7 @@ GBIF_OCCURRENCE_URL = "https://api.gbif.org/v1/occurrence/search"
 
 # ISO-3166 Alpha-2 Laendercodes, wie von GBIF erwartet
 COUNTRIES = {
-    "DE": "#5b3a29",  # Deutschland - braun, passend zu anderen Baeren-Layern
+    "DE": "#5b3a29",  # Germany - brown, matching the other bear layers
     "RO": "#c77b2e",  # Rumaenien - etwas heller, um von DE zu unterscheiden
 }
 
@@ -37,17 +35,18 @@ COUNTRIES = {
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=False)  # 1x taeglich reicht
 def fetch_gbif_bear_occurrences(country: str, limit: int = 300, timeout: int = 30) -> list[dict]:
     """
-    Holt Ursus-arctos-Sichtungen fuer ein Land von GBIF (mit Paginierung).
+    Fetch Ursus arctos sightings for one country from GBIF, with paging.
 
     Args:
-        country: ISO-3166 Alpha-2 Code, z.B. "DE" oder "RO"
-        limit: max. Datensaetze insgesamt (GBIF liefert max. 300 pro Request)
+        country: ISO 3166 alpha-2 code, for example "DE" or "RO"
+        limit: maximum number of records in total (GBIF returns at most
+            300 per request)
 
     Returns:
-        Liste von GBIF-Occurrence-Dicts (rohe API-Records, noch kein GeoJSON)
+        A list of GBIF occurrence dicts (raw API records, not yet GeoJSON)
     """
     all_records = []
-    page_size = 300  # GBIF-Maximum pro Request
+    page_size = 300  # GBIF maximum per request
     offset = 0
 
     while len(all_records) < limit:
@@ -55,9 +54,11 @@ def fetch_gbif_bear_occurrences(country: str, limit: int = 300, timeout: int = 3
             "scientificName": "Ursus arctos",
             "country": country,
             "hasCoordinate": "true",
-            "hasGeospatialIssue": "false",  # keine als fehlerhaft markierten Koordinaten
-            "occurrenceStatus": "PRESENT",  # nicht "ABSENT" (= gezielt gesucht, nicht gefunden -
-                                             # sonst landen "kein Baer hier"-Eintraege auf der Karte)
+            "hasGeospatialIssue": "false",  # exclude coordinates flagged as faulty
+            # "PRESENT" only: "ABSENT" records mean the species was
+            # searched for and not found, which would otherwise place
+            # "no bear here" entries on the map.
+            "occurrenceStatus": "PRESENT",
             "limit": min(page_size, limit - len(all_records)),
             "offset": offset,
         }
@@ -66,7 +67,7 @@ def fetch_gbif_bear_occurrences(country: str, limit: int = 300, timeout: int = 3
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
-            print(f"[GBIF] Fehler beim Abruf ({country}, offset={offset}): {e}")
+            print(f"[GBIF] Request failed ({country}, offset={offset}): {e}")
             break
 
         results = data.get("results", [])
@@ -80,15 +81,15 @@ def fetch_gbif_bear_occurrences(country: str, limit: int = 300, timeout: int = 3
 
 
 def _records_to_geojson(records: list[dict], country: str) -> dict:
-    """Wandelt rohe GBIF-Records in eine GeoJSON FeatureCollection um."""
+    """Convert raw GBIF records into a GeoJSON FeatureCollection."""
     features = []
     color = COUNTRIES.get(country, "#5b3a29")
 
-    # Datensatztypen, die keine "wilde Baer wurde hier gesehen"-Aussage sind:
-    # FOSSIL_SPECIMEN = fossile Knochenfunde (z.B. Museumsbestaende, teils
-    #   Jahrhunderte/Jahrtausende alt), LIVING_SPECIMEN = Tiere in
-    #   Gefangenschaft (Zoo/Gehege). Beides wuerde die Karte verfaelschen,
-    #   wenn es wie eine aktuelle Wildsichtung dargestellt wird.
+    # Record types that do not state "a wild bear was seen here":
+    # FOSSIL_SPECIMEN covers fossil bone finds, for example museum
+    # holdings that can be centuries or millennia old, and
+    # LIVING_SPECIMEN covers animals in captivity such as zoos. Showing
+    # either as a current wild sighting would misrepresent the map.
     _EXCLUDED_BASIS_OF_RECORD = {"FOSSIL_SPECIMEN", "LIVING_SPECIMEN"}
 
     for rec in records:
@@ -100,27 +101,27 @@ def _records_to_geojson(records: list[dict], country: str) -> dict:
         if rec.get("basisOfRecord") in _EXCLUDED_BASIS_OF_RECORD:
             continue
 
-        # Defensiv zusaetzlich zum API-Parameter oben pruefen (falls diese
-        # Funktion mal mit ungefilterten Rohdaten aufgerufen wird, oder GBIF
-        # den Parameter in einem Sonderfall nicht greifen laesst).
+        # Checked again here in addition to the API parameter above, in
+        # case this function is called with unfiltered raw records or GBIF
+        # does not honour the parameter in some edge case.
         if rec.get("occurrenceStatus") == "ABSENT":
             continue
 
         gbif_id = rec.get("gbifID") or rec.get("key")
 
-        # GBIF liefert Bild-URLs direkt im 'media'-Feld mit (keine
-        # zusaetzliche Anfrage noetig). Erstes Foto (type=StillImage) nehmen,
-        # falls vorhanden - fuer eine Bild-Vorschau direkt im Kartenpopup.
+        # GBIF returns image URLs directly in the 'media' field, so no
+        # extra request is needed. The first photo (type=StillImage) is
+        # used for a thumbnail inside the map popup.
         image_url = ""
         for m in rec.get("media", []):
             if m.get("type") == "StillImage" and m.get("identifier"):
                 image_url = m["identifier"]
                 break
 
-        # Fallback: manche Anbieter (z.B. ueber naturgucker/enjoynature.net
-        # eingespeiste Datensaetze) nutzen statt der vollen Multimedia-
-        # Extension nur das einfachere Darwin-Core-Feld 'associatedMedia'
-        # (eine oder mehrere URLs, getrennt durch ' | ').
+        # Fallback: some providers, for example records fed in through
+        # naturgucker/enjoynature.net, use the simpler Darwin Core field
+        # 'associatedMedia' instead of the full multimedia extension. It
+        # holds one or more URLs separated by ' | '.
         if not image_url:
             associated = rec.get("associatedMedia", "")
             if associated:
@@ -156,8 +157,9 @@ def _records_to_geojson(records: list[dict], country: str) -> dict:
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
 def get_gbif_bears_geojson(countries: tuple[str, ...] = ("DE", "RO"), limit_per_country: int = 300) -> dict:
     """
-    Kombinierter Layer ueber mehrere Laender - passt so direkt ins bestehende
-    GROUPS-Muster in maplibre_component.py (ein Source, ein Layer).
+    Combined layer across several countries, which fits the existing
+    GROUPS pattern in maplibre_component.py directly: one source, one
+    layer.
     """
     all_features = []
     for country in countries:
@@ -169,12 +171,12 @@ def get_gbif_bears_geojson(countries: tuple[str, ...] = ("DE", "RO"), limit_per_
 
 if __name__ == "__main__":
     for cc in ("DE", "RO"):
-        print(f"\nHole Ursus-arctos-Daten fuer {cc}...")
+        print(f"\nFetching Ursus arctos records for {cc}...")
         records = fetch_gbif_bear_occurrences(cc, limit=300)
-        print(f"  -> {len(records)} Datensaetze mit Koordinaten erhalten")
+        print(f"  -> {len(records)} records with coordinates received")
 
         if records:
-            print("  Erster Datensatz (zur Kontrolle):")
+            print("  First record (for inspection):")
             sample = {k: records[0].get(k) for k in
                       ["scientificName", "country", "eventDate", "decimalLatitude",
                        "decimalLongitude", "basisOfRecord", "institutionCode"]}
@@ -183,8 +185,8 @@ if __name__ == "__main__":
     combined = get_gbif_bears_geojson()
     n_total = len(combined["features"])
     n_with_image = sum(1 for f in combined["features"] if f["properties"].get("image_url"))
-    print(f"\nGesamt (DE+RO): {n_total} Punkte, davon {n_with_image} mit Foto ({n_with_image/n_total*100:.0f}%)")
+    print(f"\nTotal (DE and RO): {n_total} points, {n_with_image} with a photo ({n_with_image/n_total*100:.0f}%)")
 
     with open("gbif_bears_test.geojson", "w", encoding="utf-8") as f:
         json.dump(combined, f, ensure_ascii=False)
-    print("Gespeichert als gbif_bears_test.geojson zur Kontrolle (z.B. auf geojson.io ansehen).")
+    print("Written to gbif_bears_test.geojson for inspection, for example on geojson.io.")

@@ -1,0 +1,28 @@
+# Optional dependencies. NOT required to run the application.
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#
+# These packages are imported only by modules of the original movement
+# simulation that the application does not load: Hdbscan.py (clustering),
+# Weiszfeld.py (geometric median), OverviewMap.py and Visualization.py
+# (standalone Dash/Folium views).
+#
+# The integration layer bear_simulation/__init__.py deliberately avoids
+# that import chain and builds the trajectory segments directly from
+# database.db, so the application runs without these packages. See
+# ANPASSUNGEN.md, item 7, for the reasoning. On the development machine
+# hdbscan and scikit-learn are in fact blocked by Windows Smart App
+# Control, and the application works regardless.
+#
+# Install them only to run those original modules directly.
+
+hdbscan==0.8.44
+scikit-learn==1.9.1
+scipy==1.18.1
+
+# Required by bear_simulation/OverviewMap.py and Visualization.py, which
+# render standalone maps outside Streamlit. Deliberately unpinned: these
+# packages are not installed in the development environment, so no
+# verified version can be stated here. Pin them once they are installed.
+dash
+folium

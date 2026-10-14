@@ -1,19 +1,18 @@
 """
 bear_simulation/__init__.py
 ============================
-Integrationsschicht zwischen map.py und Fabian Breus Bewegungsmodell.
+Integration layer between map.py and the movement model of Fabian Breu.
 
-Die Segmente werden direkt aus database.db aufgebaut, statt
-StepSelectionModel/StepTrajectorySet zu importieren: deren Ladekette endet
-in ClusterCalculator -> Hdbscan und braucht damit hdbscan/sklearn, deren
-kompilierte Dateien auf dem Entwicklungsrechner von Windows Smart App
-Control blockiert werden. Die Cluster-Analyse liefert ausschliesslich die
-lokalen geometrischen Mediane, die von generate_alternative_steps() nie
-gelesen werden - fuer diese Karte also verzichtbar. Segmentierungsregeln
-und Schritt-Erzeugung sind unveraendert (siehe _build_segments_from_db()
-und ANPASSUNGEN.md, Punkt 7).
+Trajectory segments are built directly from database.db instead of
+importing StepSelectionModel/StepTrajectorySet. Their loading chain ends
+in ClusterCalculator -> Hdbscan and therefore requires hdbscan and
+sklearn, whose compiled libraries are blocked by Windows Smart App Control
+on the development machine. That cluster analysis only produces the local
+geometric medians, which generate_alternative_steps() never reads, so it
+is dispensable for this map. Segmentation rules and step generation are
+unchanged; see _build_segments_from_db() and ANPASSUNGEN.md, item 7.
 
-Öffentliche API:
+Public API:
   get_simulation_options()
       -> (bear_ids: list[str],
           seasons_info: dict[bear_id, dict[season, step_count]])
@@ -33,43 +32,42 @@ from .data.BearSeasons import BearSeasons
 from .model.TrajectoryPoint import TrajectoryPoint
 from .model.TrajectorySegment import TrajectorySegment
 
-# Die Schritt-Erzeugung wird aus sync_simulation wiederverwendet statt ein
-# drittes Mal implementiert. Der Import zeigt bewusst "nach oben" in die
-# App - diese Datei ist ohnehin die App-Integrationsschicht (sie importiert
-# auch streamlit) und keine wiederverwendbare Bibliothek.
+# Step generation is reused from sync_simulation rather than implemented a
+# third time. The import deliberately points "upwards" into the
+# application: this file is the application integration layer, which also
+# imports Streamlit, and not a reusable library.
 try:
     from sync_simulation import _generate_alternative_steps as _gen_alt_steps
-except Exception as _err:   # pragma: no cover - nur bei kaputter Installation
+except Exception as _err:   # pragma: no cover - only on a broken installation
     _gen_alt_steps = None
-    print(f"[bear_simulation] sync_simulation nicht ladbar: {_err}")
+    print(f"[bear_simulation] sync_simulation could not be loaded: {_err}")
 
 _DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "database.db")
 
-# Segmentierungsregeln - exakt die Werte aus Fabians StepTrajectorySet:
-# Eine Luecke von mehr als 1,5 Stunden beendet ein Segment, danach wird
-# zusaetzlich an Saisongrenzen getrennt (SeasonalTrajectoryProcessor).
+# Segmentation rules, exactly the values used by StepTrajectorySet in the
+# original model: a gap of more than 1.5 hours ends a segment, after which
+# segments are additionally split at season boundaries.
 _MAX_GAP = timedelta(hours=1.5)
 
-# Segmente mit weniger Schritten werden verworfen (wie bisher in _load_model)
+# Segments with fewer steps than this are discarded
 _MIN_STEPS = 5
 
-# Konsistente Reihenfolge der Saisons (Frühling → Sommer → Herbst → Winter)
+# Consistent season order (spring, summer, autumn, winter)
 SEASON_ORDER = ["spring", "summer", "autumn", "winter"]
 
 
-# ── Gecachtes Singleton ──────────────────────────────────────────────────────
+# --- Cached singleton --------------------------------------------------
 
 class _SpeedTable:
     """
-    Geschwindigkeitstabelle als reiner In-Memory-Dict.
+    Speed table held purely as an in-memory dictionary.
 
-    Grund (unveraendert aus der Vorversion): SQLite-Connections duerfen
-    nicht thread-uebergreifend genutzt werden, Streamlit ruft die Karte
-    aber aus wechselnden Threads auf. Deshalb wird bear_speeds EINMAL
-    gelesen und danach nur noch aus dem Dict bedient.
+    Rationale: SQLite connections must not be shared across threads, but
+    Streamlit calls the map from changing threads. The bear_speeds table is
+    therefore read ONCE and served from the dictionary afterwards.
 
-    Die Methodensignatur entspricht exakt BearSpeeds, damit die Tabelle
-    ohne Anpassung an _generate_alternative_steps uebergeben werden kann.
+    The method signature matches BearSpeeds exactly, so the table can be
+    passed to _generate_alternative_steps without adaptation.
     """
 
     def __init__(self, rows):
@@ -81,27 +79,27 @@ class _SpeedTable:
 
 def _build_segments_from_db(source: str = "Carpathians"):
     """
-    Baut die Trajektorien-Segmente direkt aus database.db auf - ohne
-    StepTrajectorySet und damit ohne die Kette
+    Build the trajectory segments directly from database.db, without
+    StepTrajectorySet and therefore without the chain
     SeasonalTrajectoryProcessor -> ClusterCalculator -> Hdbscan.
 
-    WARUM NACHGEBAUT STATT IMPORTIERT (siehe ANPASSUNGEN.md, Punkt 7):
-    StepTrajectorySet.build_segments() ruft am Ende assign_geometric_medians()
-    auf, und NUR dieser letzte Schritt braucht die Cluster-Kette und damit
-    die Pakete hdbscan/sklearn. Deren kompilierte Dateien werden auf dem
-    Entwicklungsrechner von Windows Smart App Control blockiert
-    ("DLL load failed while importing murmurhash"), wodurch der gesamte
-    Import scheiterte. generate_alternative_steps() liest
-    local_geometric_median aber an keiner Stelle - der teure Schritt ist
-    fuer diese Karte schlicht ueberfluessig.
+    Why this is reimplemented rather than imported (see ANPASSUNGEN.md,
+    item 7): StepTrajectorySet.build_segments() ends by calling
+    assign_geometric_medians(), and ONLY that last step needs the cluster
+    chain and thus the hdbscan and sklearn packages. Their compiled
+    libraries are blocked by Windows Smart App Control on the development
+    machine ("DLL load failed while importing murmurhash"), which made the
+    entire import fail. generate_alternative_steps() never reads
+    local_geometric_median, so the expensive step is simply superfluous
+    for this map.
 
-    Die Segmentierungsregeln sind identisch zu Fabians Original:
-      1. nach bear_id gruppieren, nach Zeit sortieren
-      2. neues Segment bei einer Zeitluecke > 1,5 Stunden
-      3. zusaetzlich an Saisongrenzen trennen (BearSeasons)
+    The segmentation rules are identical to the original:
+      1. group by bear_id, sort by time
+      2. start a new segment at a time gap of more than 1.5 hours
+      3. additionally split at season boundaries (BearSeasons)
 
     Returns:
-        list[TrajectorySegment] mit gesetztem .season
+        list[TrajectorySegment] with .season set
     """
     if not os.path.exists(_DB):
         return []
@@ -134,8 +132,8 @@ def _build_segments_from_db(source: str = "Carpathians"):
         gender = age = None
 
         def _flush():
-            # Schritte = Punkte - 1; zu kurze Segmente sind fuer eine
-            # Schritt-Simulation wertlos und wurden auch bisher verworfen.
+            # Steps = points - 1. Segments that are too short are
+            # worthless for a step simulation and are discarded.
             if len(current) - 1 >= _MIN_STEPS and current_season:
                 seg = TrajectorySegment(bear_id=bear_id, gender=gender, age=age,
                                         segment=list(current))
@@ -147,7 +145,7 @@ def _build_segments_from_db(source: str = "Carpathians"):
             season = bs.get_season(ts)
             gap = (last_time is not None and (ts - last_time) > _MAX_GAP)
 
-            # Trennen bei Zeitluecke ODER Saisonwechsel
+            # Split on a time gap OR a change of season
             if current and (gap or season != current_season):
                 _flush()
                 current = []
@@ -162,19 +160,18 @@ def _build_segments_from_db(source: str = "Carpathians"):
     return segments
 
 
-@st.cache_resource(show_spinner="Lade Bear-Simulationsdaten …")
+@st.cache_resource(show_spinner="Loading bear simulation data ...")
 def _load_model():
     """
-    Baut einmalig (gecacht) Segmente + Geschwindigkeitstabelle auf.
+    Build segments and the speed table once, cached.
 
-    Rueckgabe wie bisher: (speeds, index) mit
-    index = {bear_id: {season: bestes_segment}}
-    „Bestes Segment" = das mit den meisten GPS-Schritten fuer diese
-    (Baer, Saison)-Kombination.
+    Returns (speeds, index) where index = {bear_id: {season: best_segment}}
+    and "best segment" is the one with the most GPS steps for that
+    (bear, season) combination.
 
-    Der erste Rueckgabewert war frueher das StepSelectionModel; da davon
-    nur generate_alternative_steps() gebraucht wurde und diese Logik jetzt
-    aus sync_simulation kommt, steht dort nun die Geschwindigkeitstabelle.
+    The first return value used to be the StepSelectionModel. Since only
+    generate_alternative_steps() was needed from it and that logic now
+    comes from sync_simulation, it holds the speed table instead.
     """
     try:
         segments = _build_segments_from_db("Carpathians")
@@ -203,7 +200,7 @@ def _load_model():
             if existing is None or steps > len(existing.segment) - 1:
                 by_bear_season[bid][season] = seg
 
-        # Bären ohne nutzbare Saison ausfiltern
+        # Drop bears without a usable season
         index = {bid: dict(seasons)
                  for bid, seasons in by_bear_season.items()
                  if seasons}
@@ -215,15 +212,15 @@ def _load_model():
         return None
 
 
-# ── Öffentliche API ──────────────────────────────────────────────────────────
+# --- Public API -------------------------------------------------------────────────
 
 def get_simulation_options():
     """
-    Gibt (bear_ids, seasons_info) zurück.
+    Return (bear_ids, seasons_info).
 
-    bear_ids    – sortierte Liste nutzbarer Bären-IDs (str)
-    seasons_info – dict {bear_id: {season: step_count}}
-                   Zeigt genau wie viele echte Schritte pro (Bär, Saison) vorliegen.
+    bear_ids     - sorted list of usable bear IDs (str)
+    seasons_info - dict {bear_id: {season: step_count}}, giving the exact
+                   number of real steps per (bear, season) combination.
     """
     result = _load_model()
     if result is not None:
@@ -236,7 +233,7 @@ def get_simulation_options():
         }
         return bear_ids, seasons_info
 
-    # Fallback: DB direkt (kein Saison-Info verfügbar)
+    # Fallback: query the database directly; no season information available
     if not os.path.exists(_DB):
         return [], {}
     try:
@@ -258,14 +255,14 @@ def get_simulation_options():
 def get_simulation_geojson(bear_id: str, season: str,
                            num_alternatives: int = 10) -> dict:
     """
-    Gibt GeoJSON für die Hauptkarte zurück.
+    Return GeoJSON for the main map:
     {"points": FeatureCollection, "paths": FeatureCollection}
 
-    Verwendet das beste Segment für (bear_id, season) — also die meisten
-    verfügbaren echten Schritte für genau diese Saison.
+    Uses the best segment for (bear_id, season), that is, the one with the
+    most real steps available for exactly that season.
 
-    Echte Schritte  → color="#1565c0" (blau)
-    Alternativen    → color="#ff9800" (orange)
+    Real steps   -> color="#1565c0" (blue)
+    Alternatives -> color="#ff9800" (orange)
     """
     _EMPTY = {
         "points": {"type": "FeatureCollection", "features": []},
@@ -278,16 +275,16 @@ def get_simulation_geojson(bear_id: str, season: str,
             speeds, index = result
             bear_seasons = index.get(str(bear_id), {})
 
-            # Gewünschte Saison, Fallback: saison mit den meisten Schritten
+            # Requested season; fall back to the season with most steps
             seg = bear_seasons.get(season)
             if seg is None and bear_seasons:
                 seg = max(bear_seasons.values(), key=lambda s: len(s.segment))
 
             if seg is not None:
-                # Dieselbe Schritt-Erzeugung wie in der Animations-Seite -
-                # scale_to_interval=False, weil die Segmente hier bereits an
-                # Luecken > 1,5 h getrennt sind und die Schritte damit
-                # praktisch immer eine Stunde umfassen (Originalverhalten).
+                # Same step generation as on the animation page.
+                # scale_to_interval=False because these segments are
+                # already split at gaps longer than 1.5 h, so the steps
+                # practically always span one hour (original behaviour).
                 alts = _gen_alt_steps(
                     seg, speeds, num_alternatives=num_alternatives,
                     scale_to_interval=False,
@@ -339,7 +336,7 @@ def _to_geojson(alternatives_per_step: list, bear_id: str) -> dict:
 
 
 def _db_fallback(bear_id: str) -> dict:
-    """GPS-Rohdaten direkt aus database.db — wird genutzt wenn Modell nicht ladbar."""
+    """Raw GPS data straight from database.db, used when the model cannot be loaded."""
     empty = {
         "points": {"type": "FeatureCollection", "features": []},
         "paths":  {"type": "FeatureCollection", "features": []},

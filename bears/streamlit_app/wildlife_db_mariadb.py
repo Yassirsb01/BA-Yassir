@@ -9,27 +9,45 @@ import pandas as pd
 import os
 import json
 from datetime import datetime
-import shutil
 import numpy as np
 from pyproj import Transformer
 import time
 
+# Connection settings. Environment variables take precedence over the
+# defaults below, so the deployment can supply its own credentials without
+# any code change:
+#
+#   WILDLIFE_DB_HOST, WILDLIFE_DB_PORT, WILDLIFE_DB_USER,
+#   WILDLIFE_DB_PASSWORD, WILDLIFE_DB_NAME
+#
+# The defaults reproduce the previous hard-coded values so that existing
+# setups keep working unchanged. Before deploying, the credentials should
+# be supplied through the environment rather than left in the source; see
+# the deployment section of README.md.
+DB_HOST = os.environ.get("WILDLIFE_DB_HOST", "172.20.39.9")
+DB_PORT = int(os.environ.get("WILDLIFE_DB_PORT", "3306"))
+DB_USER = os.environ.get("WILDLIFE_DB_USER", "ursus")
+DB_PASSWORD = os.environ.get("WILDLIFE_DB_PASSWORD", "thibetanus")
+DB_NAME = os.environ.get("WILDLIFE_DB_NAME", "ursus")
+
+
 class WildlifeDatabase:
-    def __init__(self, db_path_or_host="172.20.39.9", port=3306, user="ursus", password="thibetanus", database="ursus"):
+    def __init__(self, db_path_or_host=DB_HOST, port=DB_PORT, user=DB_USER,
+                 password=DB_PASSWORD, database=DB_NAME):
         """Initialize the database connection to MariaDB"""
         # Add db_path attribute for backward compatibility
         self.db_path = "wildlife_data.db"
-        
+
         # Check if the first parameter is a string containing ".db"
         if isinstance(db_path_or_host, str) and ".db" in db_path_or_host:
             print(f"Note: SQLite path '{db_path_or_host}' detected, but using MariaDB connection instead.")
             self.db_path = db_path_or_host
             self.db_config = {
-                'host': "172.20.39.9",
-                'port': 3306,
-                'user': "ursus",
-                'password': "thibetanus",
-                'database': "ursus",
+                'host': DB_HOST,
+                'port': DB_PORT,
+                'user': DB_USER,
+                'password': DB_PASSWORD,
+                'database': DB_NAME,
                 'connection_timeout': 15,
             }
         else:
@@ -347,7 +365,7 @@ class WildlifeDatabase:
 
     def get_deterrent_devices(self):
         """Get deterrent devices from database"""
-        # 🔥 CAST id zu INT für numerische Sortierung!
+        # CAST id to INT so that ordering is numeric rather than lexicographic
         results = self.execute_query(
             "SELECT * FROM deterrent_devices ORDER BY CAST(id AS UNSIGNED)"
         )
@@ -1360,48 +1378,48 @@ def migrate_all_csv_to_mariadb(limit_bear_records=1000):
     """
     print("=== FAST CSV to MariaDB Migration ===")
     if limit_bear_records:
-        print(f"⚠ TESTING MODE: Limited to {limit_bear_records} bear tracking records")
+        print(f"[warning] TESTING MODE: Limited to {limit_bear_records} bear tracking records")
     
     start_time = datetime.now()
     
     # Initialize database
     try:
         db = WildlifeDatabase()
-        print("✓ MariaDB connection established")
+        print("[ok] MariaDB connection established")
     except Exception as e:
-        print(f"✗ Error connecting to MariaDB: {e}")
+        print(f"[error] Error connecting to MariaDB: {e}")
         return False
     
     # Initialize schema
     print("\n[1/6] Initializing database schema...")
     if db.initialize_db():
-        print("✓ Database schema initialized")
+        print("[ok] Database schema initialized")
     else:
-        print("✗ Database schema initialization failed")
+        print("[error] Database schema initialization failed")
         return False
     
     # Import Japan system data
     print("\n[2/6] Fast importing deterrent devices...")
     if db.import_deterrent_devices():
-        print("✓ Deterrent devices imported (fast)")
+        print("[ok] Deterrent devices imported (fast)")
     else:
-        print("✗ Deterrent devices import failed")
+        print("[error] Deterrent devices import failed")
     
     print("\n[3/6] Importing markers...")
     if db.import_markers():
-        print("✓ Markers imported")
+        print("[ok] Markers imported")
     else:
-        print("✗ Markers import failed")
+        print("[error] Markers import failed")
     
     print("\n[4/6] Importing polygons...")
     if db.import_polygons():
-        print("✓ Polygons imported")
+        print("[ok] Polygons imported")
     else:
-        print("✗ Polygons import failed")
+        print("[error] Polygons import failed")
     
     # Skip image indexing for faster testing
     print("\n[5/6] Skipping image indexing for faster testing...")
-    print("⚠ Image indexing skipped for speed (can be run separately)")
+    print("[warning] Image indexing skipped for speed (can be run separately)")
     
     # Import Carpathian Bears data with fast processing
     print("\n[6/6] Fast importing bears tracking data...")
@@ -1445,11 +1463,11 @@ def migrate_all_csv_to_mariadb(limit_bear_records=1000):
         print(f"Combined {len(combined_df)} total tracking records")
         
         if db._insert_bears_tracking_data(combined_df, limit_records=limit_bear_records):
-            print("✓ Bears tracking data imported (fast)")
+            print("[ok] Bears tracking data imported (fast)")
         else:
-            print("✗ Bears tracking data import failed")
+            print("[error] Bears tracking data import failed")
     else:
-        print("✗ No bear tracking data found")
+        print("[error] No bear tracking data found")
     
     # Verification
     print("\n[FINAL] Verifying migration...")
@@ -1459,25 +1477,25 @@ def migrate_all_csv_to_mariadb(limit_bear_records=1000):
         polygons = db.get_polygons()
         bears = db.get_bears_list()
         
-        print(f"✓ Deterrent devices: {len(deterrents)} records")
-        print(f"✓ Markers: {len(markers)} records")
-        print(f"✓ Polygons: {len(polygons)} records")
-        print(f"✓ Bears: {len(bears)} unique bears")
+        print(f"[ok] Deterrent devices: {len(deterrents)} records")
+        print(f"[ok] Markers: {len(markers)} records")
+        print(f"[ok] Polygons: {len(polygons)} records")
+        print(f"[ok] Bears: {len(bears)} unique bears")
         
         if not bears.empty:
             tracking_count = db.execute_scalar("SELECT COUNT(*) FROM bears_tracking")
-            print(f"✓ Bear tracking records: {tracking_count}")
+            print(f"[ok] Bear tracking records: {tracking_count}")
         
-        print("✓ Migration verification completed")
+        print("[ok] Migration verification completed")
         
     except Exception as e:
-        print(f"✗ Verification failed: {e}")
+        print(f"[error] Verification failed: {e}")
     
     end_time = datetime.now()
     elapsed_time = (end_time - start_time).total_seconds()
     
     print(f"\n=== FAST Migration Completed in {elapsed_time:.2f} seconds ===")
-    print("🚀 Your wildlife tracking system is ready!")
+    print("Wildlife tracking system is ready.")
     print("You can now run: streamlit run map.py")
     print("\nFor full migration without limits, use:")
     print("migrate_all_csv_to_mariadb(limit_bear_records=None)")
@@ -1489,7 +1507,7 @@ if __name__ == "__main__":
 
     db = WildlifeDatabase()
 
-    # 🔥 NEU HINZUFÜGEN (GENAU HIER!)
+    
     db.execute_update("DELETE FROM image_metadata")
     print("Old image metadata deleted.")
 

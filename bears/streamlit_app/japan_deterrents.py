@@ -173,7 +173,7 @@ class JapanDeterrentSystem:
         if df is None or df.empty:
             return {"type": "FeatureCollection", "features": []}
 
-        # 🔥 Hol die Counts nur EINMAL (gecached)
+        # Fetch the counts only ONCE (cached)
         counts_dict = {}
         if kind == "deterrent":
             counts_dict = self._get_all_image_counts(df.to_json())
@@ -187,9 +187,9 @@ class JapanDeterrentSystem:
             except Exception:
                 continue
 
-            # Geraete ohne GPS-Daten herausfiltern:
-            # - NULL-Werte aus der DB werden in Pandas zu NaN -> rausfiltern
-            # - lat=0, lng=0 bedeutet kein GPS-Signal -> rausfiltern
+            # Filter out devices without GPS data:
+            # - NULL values from the database become NaN in pandas -> filter out
+            # - lat=0, lng=0 means no GPS fix -> filter out
             if pd.isna(lat) or pd.isna(lng):
                 continue
             if abs(lat) < 0.01 and abs(lng) < 0.01:
@@ -206,7 +206,7 @@ class JapanDeterrentSystem:
             if "directory_name" in row:
                 props["directory_name"] = str(row["directory_name"])
 
-            # 🔥 Hier benutzen wir jetzt die gecachten Counts
+            # Use the cached counts here
             if kind == "deterrent":
                 raw_id = row.get("directory_name", row.get("id", ""))
                 formatted_id = self.format_device_id(raw_id)
@@ -373,7 +373,7 @@ class JapanDeterrentSystem:
         const trailCount = p.trail_count || 0;
 
         const imgSrc = PREVIEW_IMAGES[formattedId];
-        const PLACEHOLDER = `<div style="width:100%;height:90px;background:#f3f3f3;display:flex;align-items:center;justify-content:center;border-radius:6px;margin:8px 0;color:#aaa;font-size:13px;">📷 Kein Bild verfügbar</div>`;
+        const PLACEHOLDER = `<div style="width:100%;height:90px;background:#f3f3f3;display:flex;align-items:center;justify-content:center;border-radius:6px;margin:8px 0;color:#aaa;font-size:13px;">No image available</div>`;
         const imgHtml = imgSrc
           ? `<img src="${{imgSrc}}" style="width:100%;max-width:210px;height:auto;border-radius:6px;margin:8px 0;display:block;" />`
           : PLACEHOLDER;
@@ -386,7 +386,7 @@ class JapanDeterrentSystem:
               <b>Device Images:</b> ${{deviceCount}}<br>
               <b>Trail Images:</b> ${{trailCount}}
               ${{imgHtml}}
-              <span style="font-size:11px;color:#888">Weitere Bilder in der Sidebar</span>
+              <span style="font-size:11px;color:#888">More images in the sidebar</span>
             </div>
           `)
           .addTo(map);
@@ -618,9 +618,9 @@ class JapanDeterrentSystem:
         start_idx = (st.session_state[page_key] - 1) * items_per_page
 
         for img_data in image_list[start_idx : start_idx + items_per_page]:
-            # 🔥 NEU: Prüfe ob image_bytes vorhanden (aus unified table)
+            # Check whether image_bytes is present (from the unified table)
             if 'image_bytes' in img_data and img_data['image_bytes']:
-                # Bild ist als BLOB gespeichert
+                # Image is stored as a BLOB
                 try:
                     import base64
                     from PIL import Image as PILImage
@@ -636,7 +636,7 @@ class JapanDeterrentSystem:
                 except Exception as e:
                     st.sidebar.error(f"Error loading image: {e}")
             
-            # ALT: Bild liegt als Datei vor (Fallback)
+            # Legacy path: the image exists as a file (fallback)
             elif 'image_path' in img_data and img_data['image_path']:
                 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
                 relative_path = img_data.get("image_path")
@@ -654,7 +654,7 @@ class JapanDeterrentSystem:
                 st.sidebar.warning(f"No image data for: {img_data.get('filename')}")
 
     # -----------------------------
-    # Main page rendering (Vollständige UI)
+    # Main page rendering (full UI)
     # -----------------------------
     def display_japan_deterrent_section(self):
         st.title("Interactive Bear Deterrent Mapping System (MapLibre)")

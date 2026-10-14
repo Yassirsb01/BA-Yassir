@@ -1,0 +1,423 @@
+% =================================================================
+% Bachelorarbeit -- EINE einzige Datei.
+%
+% Auf Overleaf: nur diese Datei hochladen und uebersetzen.
+% Compiler: pdfLaTeX. Kein biber, kein bibtex noetig -- das
+% Literaturverzeichnis steht am Ende direkt im Dokument.
+%
+% Abbildungen kommen erst in den spaeteren Kapiteln dazu. Sobald es
+% so weit ist, den Inhalt des Ordners abbildungen/ mit hochladen;
+% \graphicspath findet sie dann ueber den zweiten Eintrag.
+%
+% Gliederung nach BA_V3 (Stand 3. Oktober 2026), die ihrerseits die
+% Kapitelreihenfolge aus V2 unveraendert uebernimmt.
+% =================================================================
+\documentclass[12pt,a4paper]{scrreprt}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[ngerman]{babel}
+\usepackage{lmodern}
+\usepackage{microtype}
+
+\usepackage[a4paper,left=3cm,right=2.5cm,top=2.5cm,bottom=2.5cm]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+
+\usepackage{graphicx}
+\graphicspath{{../abbildungen/}{./}}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[hidelinks]{hyperref}
+
+\begin{document}
+
+% -----------------------------------------------------------------
+% Titelseite
+% -----------------------------------------------------------------
+\begin{titlepage}
+\centering
+\vspace*{1.5cm}
+
+{\Large Ostbayerische Technische Hochschule Regensburg\par}
+{\large Fakultät Informatik und Mathematik\par}
+
+\vspace{3cm}
+{\Huge\bfseries Multi-Layer-Visualisierung von\\[0.35em]
+Tiersichtungsdaten in einer\\[0.35em]
+Online-Kartenplattform\par}
+
+\vspace{2.5cm}
+{\Large Bachelorarbeit\par}
+
+\vspace{2.5cm}
+{\large
+vorgelegt von\\[0.6em]
+{\bfseries Yassir Sbai}\\[0.4em]
+Matrikelnummer: 3341177\par}
+
+\vspace{2cm}
+{\large Betreuer und Prüfer: Prof.\ Dr.\ Jan Dünnweber\par}
+
+\vfill
+{\large Regensburg, \today\par}
+\end{titlepage}
+
+\tableofcontents
+
+% =================================================================
+\chapter{Einleitung}
+\label{kap:einleitung}
+
+\section{Motivation und Problemstellung}
+\label{sec:motivation}
+
+Die Erforschung und der Schutz frei lebender Wildtierpopulationen sind
+zunehmend auf digitale Werkzeuge angewiesen, die räumliche und zeitliche
+Bewegungsmuster sichtbar und analysierbar machen. Bei großen,
+potenziell konfliktträchtigen Arten wie Bären fallen dabei
+Datenquellen sehr unterschiedlicher Art an. Besenderte Tiere liefern
+GPS-Telemetriedaten, also fortlaufende Positionen eines bekannten
+Individuums. Wildkameras liefern Einzelbilder mit Zeitstempel und
+Standort, aber ohne Angabe, welches Tier ausgelöst hat.
+Simulationsmodelle schließlich erzeugen rechnerisch erzeugte
+Bewegungspfade, die weder das eine noch das andere sind. Damit diese
+Daten für ein Forschungsteam nutzbar werden, müssen sie nicht nur
+gespeichert, sondern verständlich dargestellt werden.
+
+Der Anwendungskontext dieser Arbeit umfasst zwei Regionen. In
+\textbf{Japan} haben sich Begegnungen zwischen Menschen und Bären in
+den vergangenen Jahren gehäuft. Behörden und Gemeinden reagieren unter
+anderem mit technischen Maßnahmen: Wildkameras überwachen bekannte
+Wechsel, und akustische oder optische Geräte sollen Bären von
+Siedlungen fernhalten~\cite{lorenz2025}. In den \textbf{rumänischen
+Karpaten} wurden dagegen im Rahmen einer Telemetriestudie dreizehn
+Europäische Braunbären (\textit{Ursus arctos}) über mehrere Jahre mit
+Halsbandsendern begleitet~\cite{pop2018}. Beide Bestände betreffen
+dieselbe Fragestellung -- wo halten sich die Tiere auf und wie bewegen
+sie sich --, liegen aber in völlig verschiedener Form vor.
+
+Im Rahmen einer Kooperation zwischen der Ostbayerischen Technischen
+Hochschule Regensburg und einer Partnerhochschule sind im Umfeld dieser
+Fragestellung bereits drei eigenständige Teilsysteme entstanden:
+
+\begin{itemize}
+  \item ein System zur Verwaltung und Kartierung von
+        Bärenabschreckungsmaßnahmen in Japan~\cite{lorenz2025},
+  \item ein Modell zur Simulation von Bärenbewegungen auf Basis realer
+        GPS-Trajektorien aus den Karpaten~\cite{braeu2025},
+  \item ein System zur automatisierten Extraktion von Wildtierbildern
+        aus E-Mail-Postfächern~\cite{lelchat2026}.
+\end{itemize}
+
+Diese Teilsysteme entstanden in getrennten studentischen Arbeiten. Sie
+wurden unabhängig voneinander implementiert, hielten ihre Daten jeweils
+eigenständig -- teils in einer MariaDB, teils in lokalen
+SQLite-Dateien, teils in CSV-Dateien -- und brachten jeweils eine
+eigene Kartenansicht mit, die auf der JavaScript-Bibliothek
+Leaflet beziehungsweise deren Python-Anbindung Folium beruhte.
+
+Daraus ergibt sich die eigentliche Problemstellung, und sie betrifft
+nicht die Speicherung der Daten, sondern ihre \emph{gemeinsame
+Betrachtbarkeit}. Wer beurteilen möchte, ob ein geplanter Standort für
+ein Abschreckungsgerät sinnvoll gewählt ist, müsste die
+Kamerastandorte, die dort registrierten Sichtungen, die simulierten
+Bewegungspfade und die reale Geländebeschaffenheit gleichzeitig vor
+Augen haben. Stattdessen muss zwischen mehreren Anwendungen gewechselt
+und das Ergebnis im Kopf übereinandergelegt werden.
+
+Hinzu kommt eine zweite, methodische Lücke: Es gab bislang keine
+Möglichkeit, ein \emph{Simulationsergebnis gegen Realdaten zu prüfen}.
+Die Simulation erzeugte Pfade, aber niemand konnte sehen, ob diese
+Pfade denen echter Tiere überhaupt ähneln. Ein Modell, dessen Ausgabe
+sich nicht mit der Wirklichkeit vergleichen lässt, ist als
+Planungsgrundlage wenig wert.
+
+Dass die Antwort auf beide Punkte eine Karte sein muss und keine
+Tabelle, ergibt sich aus der Natur der Fragen. Ob ein simulierter Pfad
+an einem Dorf vorbeiführt oder mitten hindurch, ob zwei Kameras
+denselben Waldrand abdecken oder zwei verschiedene, ob ein Tier einem
+Tal folgt oder es quert -- all das sind räumliche Beziehungen. In einer
+Tabelle von Koordinatenpaaren sind sie vorhanden, aber nicht erkennbar.
+
+\section{Zielsetzung der Arbeit}
+\label{sec:zielsetzung}
+
+Ziel dieser Arbeit ist die Konzeption und Implementierung einer
+einheitlichen Kartenplattform, die die genannten Teilsysteme in einer
+gemeinsamen, mehrschichtigen Visualisierung zusammenführt und um
+Werkzeuge ergänzt, mit denen sich Bewegungen darstellen und bewerten
+lassen. Die Ziele liegen auf zwei Ebenen.
+
+\subsection*{Ziel 1 -- Systemintegration}
+
+Die erste Ebene betrifft die Zusammenführung der bestehenden Systeme zu
+einer Anwendung. Dazu gehören vier Teilziele.
+
+\paragraph{Technologiewechsel der Kartenvisualisierung.}
+Die bisherige, auf Folium und Leaflet beruhende Kartendarstellung wird
+durch MapLibre GL JS abgelöst~\cite{maplibre}. Dabei handelt es sich um
+eine quelloffene, WebGL-gestützte Kartenbibliothek, die Vektordaten
+erst im Browser zeichnet. Gegenüber dem bisherigen Ansatz verbessert
+das die Darstellungsleistung bei großen Punkt- und Pfadmengen, erlaubt
+eine einheitliche, deklarative Beschreibung aller Ebenen und eröffnet
+zusätzliche Darstellungsformen wie eine Geländedarstellung mit
+Höhenrelief.
+
+\paragraph{Systemintegration auf einer gemeinsamen Karte.}
+Die drei Teilsysteme -- Bärenabschreckung Japan, Bewegungssimulation
+Karpaten und Bildextraktion -- werden in einer Anwendung mit einer
+einzigen, gemeinsam genutzten Kartenkomponente zusammengeführt. Die
+einzelnen Datenebenen, etwa reale Sichtungen aus Japan, GPS-Pfade aus
+Rumänien, Kamerastandorte, Abschreckungsgeräte und simulierte
+Bewegungen, lassen sich unabhängig voneinander ein- und ausblenden. Zum
+Vergleich werden darüber hinaus externe Datenquellen eingebunden,
+namentlich Sichtungsdaten zu Wolf und Luchs sowie Bärenvorkommen aus
+der Global Biodiversity Information Facility~\cite{gbif}.
+
+\paragraph{Vereinheitlichung der Datenhaltung.}
+Die zuvor teils lokal in SQLite und CSV-Dateien gehaltenen Daten werden
+in eine zentrale, gemeinsam nutzbare MariaDB überführt. Das ermöglicht
+konsistenten Mehrbenutzerzugriff und serverseitige Filterung, statt
+jeden Datensatz vollständig in die Anwendung zu laden.
+
+\paragraph{Interaktions- und Filterkonzept.}
+Forschende sollen einzelne Bären, Zeiträume, Jahreszeiten und
+Darstellungsarten auswählen können, ohne dass die Anwendung vollständig
+neu geladen wird.
+
+\subsection*{Ziel 2 -- Analysewerkzeuge}
+
+Die zweite Ebene ist der inhaltliche Kern der Arbeit. Sie geht über die
+Darstellung hinaus und macht die Simulation überprüfbar.
+
+\paragraph{Animierte Darstellung von Bewegungen.}
+Bewegungen werden nicht nur als fertige Linie, sondern im zeitlichen
+Ablauf dargestellt. Erst dadurch wird erkennbar, wann ein Tier
+unterwegs ist und wann es sich kaum bewegt.
+
+\paragraph{Synchrone Darstellung von echter und simulierter Bewegung.}
+Zu einer realen, aufgezeichneten Bewegung wird eine simulierte Bewegung
+mit identischem Startpunkt und identischem Zeitraster erzeugt und
+gleichzeitig animiert. Damit lässt sich unmittelbar beobachten, worin
+Modell und Wirklichkeit übereinstimmen und worin nicht. Für diese
+Darstellung musste die Simulation von einzelnen Kandidatenschritten auf
+durchgehende Bewegungspfade erweitert werden.
+
+\paragraph{Geländebewusste Richtungswahl.}
+Die Richtungswahl der Simulation soll nicht nur bewerten, wie das
+Gelände am Ende eines Schrittes beschaffen ist, sondern erkennen, in
+welcher Richtung zusammenhängendes, für Bären attraktives Gelände
+liegt. Dafür wird ein Verfahren übertragen, das ursprünglich zur
+Bestimmung von Fußpositionen auf Sensormatten entwickelt
+wurde~\cite{geyer2026}. Ergänzend wird die Richtungstreue, also die
+Neigung eines Tieres, eine einmal eingeschlagene Richtung
+beizubehalten, aus den realen Karpaten-Daten gemessen und in das Modell
+übernommen, statt sie zu schätzen.
+
+\paragraph{Quantitativer Vergleich beider Datenbestände.}
+Da sich aus den japanischen Kameradaten keine Bewegungsbahnen bilden
+lassen, wird ein Vergleich auf einer Ebene gesucht, die beide Bestände
+tragen: dem Tagesrhythmus. Über den Überlappungskoeffizienten zweier
+Aktivitätsverteilungen~\cite{ridout2009} wird quantifiziert, wie
+ähnlich sich die Tiere beider Regionen im Tagesverlauf verhalten.
+
+\paragraph{Nachvollziehbarkeit.}
+Durchgehend gilt: Jede in dieser Arbeit berichtete Zahl soll sich mit
+einem im Projekt enthaltenen Skript reproduzieren lassen, und die
+Simulation soll bei gleicher Zufallszahlenvorgabe stets dasselbe
+Ergebnis liefern. Die Vorarbeit kannte keinen festen Startwert für den
+Zufallsgenerator; Ergebnisse waren damit nicht wiederholbar.
+
+\subsection*{Abgrenzung}
+
+Einige naheliegende Erwartungen werden ausdrücklich ausgeschlossen.
+
+Es wird \textbf{kein neues Bewegungsmodell von Grund auf entwickelt}.
+Das Geschwindigkeits- und Schrittlängenmodell aus der Vorarbeit von
+Bräu~\cite{braeu2025} wird unverändert übernommen. Erweitert wird
+ausschließlich die Richtungswahl; die Abweichungen von der Vorarbeit
+werden einzeln dokumentiert und begründet.
+
+Es wird \textbf{kein Verfahren zur Artbestimmung aus Bildern}
+entwickelt. Ob auf einer Kameraaufnahme ein Bär zu sehen ist, wird als
+gegeben vorausgesetzt; die Beschaffung der Bilder ist Gegenstand der
+Vorarbeit von Lelchat~\cite{lelchat2026}.
+
+Die Anwendung verarbeitet \textbf{keine Echtzeitdaten}. Sie arbeitet
+auf abgelegten Beständen; neu eingegangene Bilder werden erkannt, aber
+es findet keine Live-Auswertung eines laufenden Kamerastroms statt.
+
+Die Simulation ist \textbf{keine Vorhersage}. Sie erzeugt plausible
+Bewegungen unter den Annahmen des Modells, trifft aber keine Aussage
+darüber, wo sich ein bestimmtes Tier zu einem bestimmten Zeitpunkt
+tatsächlich aufhalten wird. Sie wird entsprechend nicht an
+Einzelprognosen gemessen, sondern an statistischen Eigenschaften wie
+Tagesstrecke, Netto-Verlagerung und Geländenutzung.
+
+\section{Aufbau der Arbeit}
+\label{sec:aufbau}
+
+\textbf{Kapitel~\ref{kap:einleitung}} hat Ausgangslage, Problemstellung
+und Ziele umrissen.
+
+\textbf{Kapitel 2} legt die Grundlagen dar, die zum Verständnis der
+folgenden Kapitel nötig sind: Geodaten und Web-Kartenvisualisierung,
+ein Vergleich gängiger Kartenbibliotheken mit Schwerpunkt auf MapLibre
+GL JS, die bewegungsökologischen Begriffe rund um
+Step-Selection-Funktionen~\cite{thurfjell2014}, die Methodik der
+Kamerafallen-Auswertung sowie die gewichtete Schwerpunktbildung, auf
+der die neue Richtungswahl beruht.
+
+\textbf{Kapitel 3} analysiert die bestehenden Systeme: ihre Architektur,
+ihre Datenstrukturen und die technischen Grenzen, die sich bei der
+Übernahme gezeigt haben. Zusätzlich werden die Eigenschaften der beiden
+Datenbestände gemessen und belegt, da mehrere Entwurfsentscheidungen
+der Umsetzung erst dadurch begründbar werden.
+
+\textbf{Kapitel 4} beschreibt die Umsetzung: die Kartenvisualisierung
+mit MapLibre GL JS, die Integration der Teilsysteme und die
+Vereinheitlichung der Datenbank, die Einbindung externer
+Vergleichsdaten, die Bewegungsanimation, die Übertragung der Simulation
+auf die japanischen Kameradaten einschließlich Geländegewichtung und
+Offline-Betrieb, den statistischen Tagesrhythmus-Vergleich sowie die
+Interaktions- und Visualisierungskonzepte. Die jeweiligen
+Messergebnisse stehen dort, wo auch das zugehörige Verfahren
+beschrieben wird.
+
+\textbf{Kapitel 5} bewertet das entwickelte System, legt seine
+Limitationen offen und ordnet die Messergebnisse wissenschaftlich ein.
+Dazu gehört ausdrücklich auch ein negativer Befund zur Wirksamkeit des
+übertragenen Verfahrens.
+
+\textbf{Kapitel 6} fasst die Ergebnisse zusammen und gibt einen Ausblick
+auf mögliche Erweiterungen.
+
+% =================================================================
+% Weitere Kapitel werden hier unten angehaengt. Struktur nach V3:
+%
+% \chapter{Grundlagen}
+%   2.1 Geodaten und Web-Kartenvisualisierung
+%   2.2 Web-Kartenbibliotheken (insb. MapLibre GL JS)
+%   2.3 Bewegungsoekologie und Step-Selection-Funktionen
+%   2.4 Kamerafallen-Methodik und Aktivitaetsmuster-Analyse
+%   2.5 Gewichtete Schwerpunktbildung und Instanztrennung
+%
+% \chapter{Analyse der bestehenden Systeme}
+%   3.1 Systemuebersicht und Komponenten
+%   3.2 Simulationsdaten
+%   3.3 Datengrundlage und ihre gemessenen Eigenschaften
+%
+% \chapter{Implementierung}
+%   4.1 Kartenvisualisierung mit MapLibre GL JS
+%   4.2 Integration der Teilsysteme
+%   4.3 Externe Vergleichsdatenquellen (Wolf/Luchs, GBIF)
+%   4.4 Bewegungsanimation
+%   4.5 Uebertragung auf japanische Kameradaten
+%   4.6 Statistischer Tagesrhythmus-Vergleich
+%   4.7 Interaktions- und Visualisierungskonzepte
+%   4.8 Robustheit und Betriebsfaehigkeit
+%
+% \chapter{Diskussion}
+%   5.1 Bewertung des entwickelten Systems
+%   5.2 Limitationen
+%   5.3 Wissenschaftliche Einordnung des Delta-Ergebnisses
+%   5.4 Wirksamkeit der uebertragenen Methode
+%
+% \chapter{Fazit und Ausblick}
+% =================================================================
+
+% =================================================================
+% Literaturverzeichnis
+%
+% Noch zu klaeren:
+%  - Art der Arbeit von Lelchat beim Betreuer erfragen
+%  - finale Angaben zum Journal-Artikel, sobald erschienen
+%  - Seitenzahlen der Konferenzfassung
+%  - Ridout und Linkie gegen das Original pruefen
+%  - Primaerquelle fuer die Fallzahlen in Japan ergaenzen
+%  - genaue GBIF-Download-DOI und BfN-Quelle ergaenzen
+% =================================================================
+\begin{thebibliography}{99}
+
+\bibitem{braeu2025}
+F.~Bräu,
+\emph{Analyse und Simulation von Bärenbewegungen}.
+Bachelorarbeit, Ostbayerische Technische Hochschule Regensburg,
+Fakultät Informatik und Mathematik, August 2025.
+
+\bibitem{lorenz2025}
+M.~Lorenz,
+\emph{Entwicklung und Implementierung eines interaktiven GIS-Systems zur
+Kartierung von Wildtierdaten mit Fokus auf
+Bärenabschreckungsmaßnahmen in Japan}.
+Bachelorarbeit, Ostbayerische Technische Hochschule Regensburg,
+Fakultät Informatik/Mathematik, Juni 2025.
+
+\bibitem{lelchat2026}
+A.~Lelchat und J.~Dünnweber,
+\emph{Extracting wildlife pictures from emails}.
+Ostbayerische Technische Hochschule Regensburg, 2026.
+
+\bibitem{geyer2026}
+J.~Geyer, M.~Melzer, J.~Dünnweber und A.~Sarkar,
+"`Human Step Movement Imitation for Training Privacy-Aware Intelligent
+Environments"', in \emph{2026 22nd International Conference on
+Intelligent Environments (IE)}, Juni 2026.
+DOI: 10.1109/IE69249.2026.11539056.
+
+\bibitem{duennweber2026}
+J.~Dünnweber und J.~Geyer,
+"`Walking in Every Direction: Aperiodic Training Data and Anisotropic
+Kernels for Step Movement Analysis"',
+\emph{Journal of Ambient Intelligence and Smart Environments},
+im Erscheinen.
+
+\bibitem{pop2018}
+I.~M.~Pop, L.~Bereczky, S.~Chiriac, R.~Iosif, A.~Nita, V.~D.~Popescu
+und L.~Rozylowicz,
+"`Movement ecology of brown bears (\emph{Ursus arctos}) in the Romanian
+Eastern Carpathians"', \emph{Nature Conservation}, Bd.~26,
+S.~15--31, 2018. DOI: 10.3897/natureconservation.26.22955.
+
+\bibitem{thurfjell2014}
+H.~Thurfjell, S.~Ciuti und M.~S.~Boyce,
+"`Applications of step-selection functions in ecology and
+conservation"', \emph{Movement Ecology}, Bd.~2, Nr.~4, 2014.
+DOI: 10.1186/2051-3933-2-4.
+
+\bibitem{ridout2009}
+M.~S.~Ridout und M.~Linkie,
+"`Estimating overlap of daily activity patterns from camera trap
+data"', \emph{Journal of Agricultural, Biological, and Environmental
+Statistics}, Bd.~14, Nr.~3, S.~322--337, 2009.
+
+\bibitem{maplibre}
+MapLibre-Projekt,
+\emph{MapLibre GL JS}.
+\url{https://maplibre.org/maplibre-gl-js/docs/}
+
+\bibitem{gbif}
+Global Biodiversity Information Facility,
+\emph{GBIF Occurrence Data}.
+\url{https://www.gbif.org}
+
+\bibitem{openstreetmap}
+OpenStreetMap-Mitwirkende,
+\emph{OpenStreetMap}. Daten unter ODbL.
+\url{https://www.openstreetmap.org}
+
+\bibitem{overpass}
+OpenStreetMap Wiki,
+\emph{Overpass API}.
+\url{https://wiki.openstreetmap.org/wiki/Overpass_API}
+
+\bibitem{epsg3844}
+IOGP Geomatics Committee,
+\emph{EPSG Geodetic Parameter Registry}, Code 3844
+(Pulkovo 1942(58) / Stereo70).
+\url{https://epsg.org/}
+
+\end{thebibliography}
+
+\end{document}

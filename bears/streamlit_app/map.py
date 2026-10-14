@@ -1,19 +1,19 @@
 """
 map.py
 ======
-Hauptanwendung: EINE gemeinsame Karte fuer alle drei Systeme.
+Main application: ONE shared map for all three subsystems.
 
-Aufbau:
-  - Sidebar oben: Status-Widget (neue Bilder)
-  - Sidebar: Kartenstil + Filter pro System (Carpathian, Japan-Bilder, Simulation)
-  - Hauptbereich: EINE MapLibre-Karte. Die AUSWAHL der Layer passiert direkt
-    AUF DER KARTE (oben links). Beim Start sieht man nur die Karte ohne Daten.
-    Haken setzen -> Layer erscheint und die Karte zoomt automatisch darauf.
+Layout:
+  - Sidebar, top: status widget for newly arrived images
+  - Sidebar: filters per subsystem (Carpathian, Japan images, simulation)
+  - Main area: ONE MapLibre map. Layers are SELECTED on the map itself
+    (top left). On start the map is shown without data; ticking a layer
+    makes it appear and the map zooms to it automatically.
 
-Wichtig (IT-Hinweis):
-  Die Daten aller Systeme werden im Hintergrund vorbereitet (gecacht) und in die
-  Karte eingebettet. Die Checkboxen auf der Karte blenden sie nur ein/aus + zoomen.
-  So funktioniert die Auswahl ganz auf der Karte, ohne dass die Seite neu laedt.
+Implementation note: the data of all subsystems is prepared in the
+background (cached) and embedded into the map. The checkboxes on the map
+only toggle visibility and zoom, so selection happens entirely in the
+browser without reloading the page.
 """
 
 import streamlit as st
@@ -26,12 +26,12 @@ from geojson_table_helper import geojson_to_dataframe
 st.set_page_config(page_title="Wildlife Movement Analysis System", layout="wide")
 
 # ============================================================
-# Kartenzustand aus der URL wiederherstellen (falls vorhanden).
+# Restore the map state from the URL, if present.
 # maplibre_component.py schreibt Center/Zoom/Basemap/sichtbare Layer bei
-# jeder Interaktion in die Query-Parameter (window.parent.history.replaceState).
-# Bei einem Rerun (z.B. Filter "Anwenden") sind sie hier schon in der URL und
-# koennen ausgelesen werden -> Karte startet an der zuletzt gesehenen Stelle
-# statt wieder bei der Default-Ansicht.
+# every interaction into the query parameters (window.parent.history.replaceState).
+# On a rerun, for example after applying a filter, they are already in the
+# URL and can be read back, so the map starts at the position last seen
+# rather than at the default view.
 # ============================================================
 def _restore_map_state():
     qp = st.query_params
@@ -50,12 +50,12 @@ def _restore_map_state():
     if basemap not in ml.BASEMAP_NAMES:
         basemap = ml.DEFAULT_BASEMAP
 
-    # 3D-Gelaende wie Zoom/Stil ueber Reruns mitnehmen
+    # Carry the 3D terrain toggle across reruns, like zoom and style
     terrain3d = qp.get("m_3d") == "1"
 
     layers_raw = qp.get("m_layers", "")
-    # Bei allererstem Aufruf (kein Query-Param vorhanden) -> None zurueckgeben,
-    # damit render_maplibre() auf die alte Default-Logik (Simulation an) faellt.
+    # On the very first call no query parameter exists, so return None and
+    # let render_maplibre() fall back to its default visibility logic.
     initial_visible = set(layers_raw.split(",")) if layers_raw else None
 
     return center, zoom, basemap, terrain3d, initial_visible
@@ -64,39 +64,39 @@ def _restore_map_state():
 (_restored_center, _restored_zoom, _restored_basemap,
  _restored_terrain3d, _restored_visible) = _restore_map_state()
 
-# Layer, deren zugrunde liegende Daten sich in diesem Rerun geaendert haben
-# (z.B. anderer Baer/Zeitraum gewaehlt) -> sollen automatisch angeflogen
-# werden, auch wenn sie schon vorher sichtbar waren (siehe Carpathian-/
-# Simulation-Bloecke weiter unten).
+# Layers whose underlying data changed during this rerun
+# (for example a different bear or period was selected). The map flies to
+# them automatically, even if they were already visible; see the Carpathian
+# and simulation blocks further down.
 _refit_groups = set()
 
 
 def _mark_refit_if_changed(session_key: str, new_signature, group_name: str):
-    """Vergleicht die aktuelle Filter-Signatur mit der vom letzten Rerun.
-    Bei Aenderung wird group_name zu _refit_groups hinzugefuegt, damit die
-    Karte beim naechsten Laden dorthin navigiert statt an der alten Kamera-
-    position (aus der URL-Persistenz) stehen zu bleiben."""
+    """Compare the current filter signature with the one from the previous
+    rerun. On a change, group_name is added to _refit_groups so that the
+    map navigates to the new data on the next load instead of staying at
+    the old camera position restored from the URL."""
     old_signature = st.session_state.get(session_key)
     if old_signature != new_signature:
         _refit_groups.add(group_name)
     st.session_state[session_key] = new_signature
 
 # ============================================================
-# Sidebar: Status-Widget + Kartenstil
+# Sidebar: status widget and filters
 # ============================================================
 with st.sidebar:
     try:
         display_new_images_status(position="sidebar")
     except Exception as e:
-        st.error(f"Status-Widget nicht verfügbar (DB-Verbindung?): {e}")
+        st.error(f"Status widget unavailable (database connection?): {e}")
     st.markdown("---")
 
-st.sidebar.caption("Layer und Kartenstil wählst du direkt auf der Karte (oben links).")
+st.sidebar.caption("Layers and base map style are selected on the map itself (top left).")
 st.sidebar.markdown("---")
 
 st.title("Wildlife Movement Analysis System")
 
-# Daten-Container fuer jedes System (werden vorgeladen)
+# Data containers per subsystem, filled in advance
 japan_data = None
 carpathian_data = None
 simulation_data = None
@@ -113,13 +113,13 @@ try:
         return JapanDeterrentSystem()
 
     # ------------------------------------------------------------
-    # Neue Marker/Gebiete verarbeiten, die per Karten-Zeichenfunktion
-    # (maplibre_component.py, saveDrawing()) als URL-Parameter ankommen.
-    # Laeuft VOR dem Laden der Kartendaten, damit der neue Eintrag sofort
-    # sichtbar ist, sobald die Seite (nach dem Speichern-Klick per echter
-    # Navigation neu geladen) hier ankommt. Cache wird explizit geleert,
-    # sonst wuerde die alte, gecachte JapanDeterrentSystem-Instanz weiter
-    # die Daten von VOR dem Speichern zeigen.
+    # Handle new markers and areas that arrive as URL parameters from the
+    # drawing tool on the map (maplibre_component.py, saveDrawing()).
+    # This runs BEFORE the map data is loaded so that a new entry is
+    # visible as soon as the page reloads after saving. The cache is
+    # cleared explicitly; otherwise the previously cached
+    # JapanDeterrentSystem instance would keep showing the state from
+    # before the save.
     # ------------------------------------------------------------
     qp = st.query_params
 
@@ -131,12 +131,12 @@ try:
             db = WildlifeDatabase()
             new_id = db.get_next_marker_id()
             if db.save_marker(new_id, lat, lng):
-                st.toast(f"Marker {new_id} gespeichert.", icon="✅")
+                st.toast(f"Marker {new_id} saved.")
                 _get_japan_system.clear()
             else:
-                st.error("Marker konnte nicht gespeichert werden (Datenbankverbindung/VPN prüfen).")
+                st.error("Marker could not be saved (check the database connection and VPN).")
         except Exception as e:
-            st.error(f"Fehler beim Speichern des Markers: {e}")
+            st.error(f"Error while saving the marker: {e}")
         finally:
             del st.query_params["new_marker_lat"]
             del st.query_params["new_marker_lng"]
@@ -152,12 +152,12 @@ try:
             new_id = db.get_next_polygon_id()
             polygon_id = f"poly-{new_id}"
             if db.save_polygon(polygon_id, name, coords):
-                st.toast(f"Gebiet „{name}“ gespeichert.", icon="✅")
+                st.toast(f"Area \"{name}\" saved.")
                 _get_japan_system.clear()
             else:
-                st.error("Gebiet konnte nicht gespeichert werden (Datenbankverbindung/VPN prüfen).")
+                st.error("Area could not be saved (check the database connection and VPN).")
         except Exception as e:
-            st.error(f"Fehler beim Speichern des Gebiets: {e}")
+            st.error(f"Error while saving the area: {e}")
         finally:
             del st.query_params["new_polygon_coords"]
             del st.query_params["new_polygon_name"]
@@ -170,16 +170,16 @@ try:
         "polygons": jp._polygons_to_geojson(jp.existing_polygons),
     }
 
-    # Japan-Bilder/Geraete-Browser (eigene Sidebar-Logik der Klasse)
+    # Japan image and device browser (the class brings its own sidebar UI)
     jp.display_device_images_in_sidebar()
     st.sidebar.markdown("---")
 
 except Exception as e:
-    st.error(f"Fehler beim Laden des Japan-Systems: {e}")
+    st.error(f"Error while loading the Japan subsystem: {e}")
 
 
 # ============================================================
-# CARPATHIAN  (Filter als Form -> laedt nur bei "Anwenden" neu)
+# CARPATHIAN (filters inside a form, so data reloads only on "Apply")
 # ============================================================
 try:
     from carpathian_bears import (get_carpathian_geojson, get_carpathian_options,
@@ -189,30 +189,30 @@ try:
 
     with st.sidebar.expander("Carpathian: Filter", expanded=False):
         if not bears:
-            st.info("Keine Carpathian-Daten gefunden.")
+            st.info("No Carpathian data found.")
             sel_bears, sel_seasons = [], []
             sd, ed = min_date, max_date
             map_type, max_pts = "Movement Paths", 3000
         else:
             with st.form("cp_form"):
-                select_all = st.checkbox("Alle Bären", value=False)
+                select_all = st.checkbox("All bears", value=False)
                 bears_choice = st.multiselect(
-                    "Bären", bears, default=bears[: min(2, len(bears))]
+                    "Bears", bears, default=bears[: min(2, len(bears))]
                 )
                 sel_seasons = st.multiselect(
-                    "Saison", seasons, default=seasons, help=SEASON_HELP,
+                    "Season", seasons, default=seasons, help=SEASON_HELP,
                 )
                 st.caption(
-                    "Biologische Jahresphasen des Bären, keine Kalenderjahreszeiten – "
-                    "Erklärung über das (?) neben dem Feld."
+                    "Biological annual phases of the bear, not calendar seasons. "
+                    "See the (?) next to the field."
                 )
                 date_range = st.date_input(
-                    "Zeitraum", value=(min_date, max_date),
+                    "Period", value=(min_date, max_date),
                     min_value=min_date, max_value=max_date,
                 )
-                map_type = st.selectbox("Darstellung", ["Movement Paths", "Daily Positions"], index=0)
-                max_pts = st.slider("Max. Punkte/Bär", 300, 20000, 3000, 100)
-                st.form_submit_button("Anwenden", type="primary")
+                map_type = st.selectbox("Display", ["Movement Paths", "Daily Positions"], index=0)
+                max_pts = st.slider("Max. points per bear", 300, 20000, 3000, 100)
+                st.form_submit_button("Apply", type="primary")
 
             sel_bears = bears if select_all else bears_choice
             if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
@@ -224,7 +224,7 @@ try:
     end_dt = datetime.combine(ed, datetime.max.time())
 
     if sel_bears:
-        with st.spinner("Bereite Carpathian-Daten vor..."):
+        with st.spinner("Preparing Carpathian data..."):
             carpathian_data = get_carpathian_geojson(
                 selected_bears=sel_bears,
                 start_datetime=start_dt,
@@ -240,13 +240,13 @@ try:
         )
 
 except Exception as e:
-    st.error(f"Fehler beim Laden der Carpathian-Daten: {e}")
+    st.error(f"Error while loading the Carpathian data: {e}")
 
 
 # ============================================================
-# SIMULATION  (Fabian Breus StepSelectionModel - vollstaendige Integration)
-# Wird immer vorgeladen (Default: erster Baer, 10 Alternativen)
-# -> Checkbox auf der Karte ist von Anfang an verfuegbar
+# SIMULATION (movement model of Fabian Breu, fully integrated)
+# Always preloaded with defaults (first bear, 10 alternatives) so that the
+# checkbox on the map is available from the start.
 # ============================================================
 try:
     from bear_simulation import get_simulation_geojson, get_simulation_options, SEASON_ORDER
@@ -256,62 +256,62 @@ try:
     with st.sidebar.expander("Bear Simulation: Filter", expanded=False):
         if not sim_bear_ids:
             st.warning(
-                "bear_simulation/data/database.db nicht gefunden. "
-                "Bitte Inhalt von bearsimulation-master in bear_simulation/ kopieren."
+                "bear_simulation/data/database.db not found. "
+                "Copy the contents of bearsimulation-master into bear_simulation/."
             )
             _sim_bear   = None
             _sim_season = None
             _sim_num_alt = 10
         else:
-            # ── welcher Bär ist gerade "committed" (nach letztem Anwenden)? ──
+            # Which bear is currently committed, that is, applied last?
             _committed_bear = st.session_state.get(
                 "sim_committed_bear", str(sim_bear_ids[0])
             )
-            # Saisons für den committed Bären (vor dem Submit)
+            # Seasons available for the committed bear, before submitting
             _avail_seasons = sim_seasons_info.get(_committed_bear, {})
-            # Sortiert nach definierer Reihenfolge, fehlende ans Ende
+            # Sorted by the defined order, unknown values last
             _sorted_seasons = sorted(
                 _avail_seasons.keys(),
                 key=lambda s: SEASON_ORDER.index(s) if s in SEASON_ORDER else 99,
             )
-            # Lesbare Labels: "Autumn", "Summer", ...
+            # Readable labels: "Autumn", "Summer", ...
             _season_labels = [s.capitalize() for s in _sorted_seasons]
 
             with st.form("sim_form"):
                 _sim_bear = st.selectbox(
-                    "Bär auswählen",
+                    "Select bear",
                     sim_bear_ids,
                     index=sim_bear_ids.index(_committed_bear)
                           if _committed_bear in sim_bear_ids else 0,
                     key="sim_bear_sel",
-                    help="Nur Bären mit mindestens 5 GPS-Schritten werden angezeigt",
+                    help="Only bears with at least 5 GPS steps are listed",
                 )
                 if _season_labels:
                     _sim_season_label = st.selectbox(
-                        "Saison",
+                        "Season",
                         _season_labels,
-                        help="Jede Option zeigt die exakte Anzahl echter GPS-Schritte "
-                             "für diesen Bären in dieser Saison",
+                        help="Each option reflects the exact number of real GPS "
+                             "steps for this bear in this season",
                     )
-                    # Saison-Schlüssel aus Label extrahieren (z. B. "Autumn" → "autumn")
+                    # Derive the season key from the label ("Autumn" -> "autumn")
                     _sim_season = _sim_season_label.lower()
                 else:
-                    st.info("Keine Saisondaten für diesen Bären verfügbar.")
+                    st.info("No season data available for this bear.")
                     _sim_season_label = None
                     _sim_season = None
 
                 _sim_num_alt = st.slider(
-                    "Alternativen pro Schritt",
+                    "Alternatives per step",
                     min_value=3, max_value=20, value=10,
-                    help="Anzahl simulierter Alternativpositionen pro echtem GPS-Schritt",
+                    help="Number of simulated alternative positions per real GPS step",
                 )
-                submitted = st.form_submit_button("Anwenden", type="primary")
+                submitted = st.form_submit_button("Apply", type="primary")
                 if submitted:
                     st.session_state["sim_committed_bear"] = str(_sim_bear)
 
-    # Immer laden → Simulation-Checkbox auf der Karte sofort verfügbar
+    # Always load so the simulation checkbox on the map works immediately
     if sim_bear_ids and _sim_bear is not None and _sim_season is not None:
-        with st.spinner("Lade Simulationsdaten..."):
+        with st.spinner("Loading simulation data..."):
             simulation_data = get_simulation_geojson(
                 bear_id=str(_sim_bear),
                 season=_sim_season,
@@ -322,7 +322,7 @@ try:
             (str(_sim_bear), _sim_season, _sim_num_alt),
             "simulation",
         )
-        # Status-Caption
+        # Status caption
         feats  = simulation_data.get("points", {}).get("features", [])
         n_real = sum(1 for f in feats if f["properties"].get("type") == "real")
         n_alt  = sum(1 for f in feats if f["properties"].get("type") == "alternative")
@@ -330,37 +330,36 @@ try:
             _season_disp = _sim_season.capitalize()
             _total = n_real + n_alt
             st.sidebar.caption(
-                f"🐻 Bär {_sim_bear} · {_season_disp}: "
-                f"{n_real} echte Schritte × {_sim_num_alt} Alternativen "
-                f"= {_total} Punkte gesamt"
+                f"Bear {_sim_bear} / {_season_disp}: "
+                f"{n_real} real steps x {_sim_num_alt} alternatives "
+                f"= {_total} points in total"
             )
         else:
             st.sidebar.caption(
-                f"🐻 Bär {_sim_bear}: {n_real} GPS-Punkte (Fallback-Modus)"
+                f"Bear {_sim_bear}: {n_real} GPS points (fallback mode)"
             )
 
 except ImportError:
     pass
 except Exception as e:
-    st.error(f"Fehler beim Laden der Simulation: {e}")
+    st.error(f"Error while loading the simulation: {e}")
 
 
 # ============================================================
-# WOLF/LUCHS (BfN) + BÄR-SICHTUNGEN (GBIF) - externe, oeffentliche APIs
-# Kein VPN noetig (anders als die MariaDB-Systeme), aber eigener Haken in
-# der Sidebar, falls jemand offline arbeitet oder die Anfragen bewusst
-# vermeiden will.
+# WOLF/LYNX (BfN) and BEAR SIGHTINGS (GBIF): external, public APIs.
+# No VPN required, unlike the MariaDB subsystems, but behind its own
+# checkbox in the sidebar for offline work or to avoid the requests.
 # ============================================================
 wolf_lynx_data = None
 gbif_bears_data = None
 
-with st.sidebar.expander("Externe Vergleichsdaten", expanded=False):
+with st.sidebar.expander("External reference data", expanded=False):
     load_external = st.checkbox(
-        "Wolf/Luchs (BfN) + Bär-Sichtungen (GBIF) laden",
+        "Load wolf/lynx (BfN) and bear sightings (GBIF)",
         value=True,
-        help="Kostenfreie, oeffentliche Datenquellen. Wolf/Luchs vom "
-             "Bundesamt fuer Naturschutz, Baer-Sichtungen von GBIF "
-             "(Deutschland + Rumaenien).",
+        help="Free, public data sources. Wolf and lynx records from the "
+             "German Federal Agency for Nature Conservation, bear sightings "
+             "from GBIF (Germany and Romania).",
     )
 
 if load_external:
@@ -368,17 +367,17 @@ if load_external:
         from import_bfn_wolf_lynx import get_wolf_lynx_geojson
         wolf_lynx_data = get_wolf_lynx_geojson()
     except Exception as e:
-        st.sidebar.warning(f"Wolf/Luchs-Daten (BfN) nicht verfügbar: {e}")
+        st.sidebar.warning(f"Wolf and lynx data (BfN) unavailable: {e}")
 
     try:
         from import_gbif_bears import get_gbif_bears_geojson
         gbif_bears_data = get_gbif_bears_geojson()
     except Exception as e:
-        st.sidebar.warning(f"Bär-Sichtungen (GBIF) nicht verfügbar: {e}")
+        st.sidebar.warning(f"Bear sightings (GBIF) unavailable: {e}")
 
 
 # ============================================================
-# Karte rendern (Startansicht leer; Auswahl + Zoom auf der Karte)
+# Render the map (empty on start; selection and zoom happen on the map)
 # ============================================================
 ml.render_maplibre(
     japan=japan_data,
@@ -386,102 +385,102 @@ ml.render_maplibre(
     simulation=simulation_data,
     wolf_lynx=wolf_lynx_data,
     gbif_bears=gbif_bears_data,
-    basemap=_restored_basemap,       # zuletzt gewaehlter Stil, sonst Satellit
-    terrain3d=_restored_terrain3d,   # 3D-Schalter-Zustand mitnehmen
-    center=_restored_center,          # zuletzt gesehene Kameraposition, sonst Default
+    basemap=_restored_basemap,        # last chosen style, otherwise satellite
+    terrain3d=_restored_terrain3d,    # carry over the 3D toggle state
+    center=_restored_center,          # last camera position, otherwise default
     zoom=_restored_zoom,
-    initial_visible=_restored_visible,  # zuletzt sichtbare Layer, sonst alte Default-Logik
-    refit_on_load=_refit_groups,      # Layer mit geaenderten Filterdaten -> neu hinfliegen
+    initial_visible=_restored_visible,  # last visible layers, otherwise defaults
+    refit_on_load=_refit_groups,      # layers with changed filters: fly to them
     height=800,
 )
 
 st.caption(
-    "Oben links auf der Karte die Layer an-/abhaken. Beim Anhaken zoomt die Karte "
-    "automatisch auf die jeweiligen Daten. Welche Bären/Filter geladen werden, "
-    "stellst du links in der Sidebar ein."
+    "Tick the layers at the top left of the map. Ticking a layer makes the "
+    "map zoom to its data automatically. Which bears and filters are loaded "
+    "is configured in the sidebar."
 )
 
 # ============================================================
-# Datentabellen unter der Karte - dieselben Daten, die auch auf der Karte
-# dargestellt werden (direkt aus denselben Variablen, keine zweite Abfrage),
-# damit sich das Kartenbild anhand der Rohdaten nachvollziehen laesst.
+# Data tables below the map, built from the same variables that feed the
+# map rather than from a second query, so the rendered map can be checked
+# against its underlying data.
 # ============================================================
-st.markdown("### Daten zur aktuellen Kartenansicht")
+st.markdown("### Data behind the current map view")
 
 _table_tabs = st.tabs([
-    "Japan-Geräte", "Japan Marker/Gebiete", "Carpathian GPS",
-    "Simulation", "Wolf/Luchs", "GBIF Bär-Sichtungen",
+    "Japan devices", "Japan markers and areas", "Carpathian GPS",
+    "Simulation", "Wolf and lynx", "GBIF bear sightings",
 ])
 
 with _table_tabs[0]:
     df = geojson_to_dataframe((japan_data or {}).get("deterrents"))
-    st.caption(f"{len(df)} Abschreckungsgeräte" if not df.empty else "Keine Daten geladen.")
+    st.caption(f"{len(df)} deterrent devices" if not df.empty else "No data loaded.")
     if not df.empty:
         st.dataframe(df, width="stretch")
 
 with _table_tabs[1]:
     df_m = geojson_to_dataframe((japan_data or {}).get("markers"))
     df_p = geojson_to_dataframe((japan_data or {}).get("polygons"))
-    st.caption(f"{len(df_m)} Marker, {len(df_p)} Gebiete/Polygone")
+    st.caption(f"{len(df_m)} markers, {len(df_p)} areas")
 
     if not df_m.empty:
-        st.markdown("**Marker**")
+        st.markdown("**Markers**")
         st.dataframe(df_m, width="stretch")
-        with st.expander("Marker löschen"):
-            del_marker_id = st.selectbox("Zu löschender Marker", df_m["id"], key="del_marker_sel")
-            confirm_marker = st.checkbox("Ja, wirklich löschen", key="confirm_del_marker")
-            if st.button("Marker löschen", disabled=not confirm_marker, key="btn_del_marker"):
+        with st.expander("Delete marker"):
+            del_marker_id = st.selectbox("Marker to delete", df_m["id"], key="del_marker_sel")
+            confirm_marker = st.checkbox("Yes, delete it", key="confirm_del_marker")
+            if st.button("Delete marker", disabled=not confirm_marker, key="btn_del_marker"):
                 from wildlife_db_mariadb import WildlifeDatabase
                 if WildlifeDatabase().delete_marker(del_marker_id):
-                    st.toast(f"Marker {del_marker_id} gelöscht.", icon="🗑️")
+                    st.toast(f"Marker {del_marker_id} deleted.")
                     _get_japan_system.clear()
                     st.rerun()
                 else:
-                    st.error("Löschen fehlgeschlagen (Datenbankverbindung/VPN prüfen).")
+                    st.error("Deletion failed (check the database connection and VPN).")
 
     if not df_p.empty:
-        st.markdown("**Gebiete**")
+        st.markdown("**Areas**")
         st.dataframe(df_p, width="stretch")
-        with st.expander("Gebiet löschen"):
+        with st.expander("Delete area"):
             _poly_labels = {row["polygon_id"]: f"{row.get('name', '')} ({row['polygon_id']})" for _, row in df_p.iterrows()}
             del_poly_id = st.selectbox(
-                "Zu löschendes Gebiet", options=list(_poly_labels.keys()),
+                "Area to delete", options=list(_poly_labels.keys()),
                 format_func=lambda k: _poly_labels[k], key="del_poly_sel",
             )
-            confirm_poly = st.checkbox("Ja, wirklich löschen", key="confirm_del_poly")
-            if st.button("Gebiet löschen", disabled=not confirm_poly, key="btn_del_poly"):
+            confirm_poly = st.checkbox("Yes, delete it", key="confirm_del_poly")
+            if st.button("Delete area", disabled=not confirm_poly, key="btn_del_poly"):
                 from wildlife_db_mariadb import WildlifeDatabase
                 if WildlifeDatabase().delete_polygon(del_poly_id):
-                    st.toast(f"Gebiet {del_poly_id} gelöscht.", icon="🗑️")
+                    st.toast(f"Area {del_poly_id} deleted.")
                     _get_japan_system.clear()
                     st.rerun()
                 else:
-                    st.error("Löschen fehlgeschlagen (Datenbankverbindung/VPN prüfen).")
+                    st.error("Deletion failed (check the database connection and VPN).")
 
     if df_m.empty and df_p.empty:
-        st.info("Keine Marker/Gebiete in der Datenbank.")
+        st.info("No markers or areas in the database.")
 
 with _table_tabs[2]:
     df = geojson_to_dataframe((carpathian_data or {}).get("points"))
-    st.caption(f"{len(df)} GPS-Punkte im aktuell gewählten Zeitraum/Filter" if not df.empty else "Keine Daten geladen.")
+    st.caption(f"{len(df)} GPS points in the selected period and filters" if not df.empty else "No data loaded.")
     if not df.empty:
         st.dataframe(df, width="stretch")
 
 with _table_tabs[3]:
     df = geojson_to_dataframe((simulation_data or {}).get("points"))
-    st.caption(f"{len(df)} simulierte Punkte (echt + Alternativen)" if not df.empty else "Keine Daten geladen.")
+    st.caption(f"{len(df)} simulated points (real plus alternatives)" if not df.empty else "No data loaded.")
     if not df.empty:
         st.dataframe(df, width="stretch")
 
 with _table_tabs[4]:
     df = geojson_to_dataframe(wolf_lynx_data)
-    st.caption(f"{len(df)} Rasterzellen (Wolf + Luchs)" if not df.empty else "Keine Daten geladen (Haken bei „Externe Vergleichsdaten“ gesetzt?).")
+    st.caption(f"{len(df)} grid cells (wolf and lynx)" if not df.empty else "No data loaded (is \"External reference data\" enabled?).")
     if not df.empty:
         st.dataframe(df, width="stretch")
 
 with _table_tabs[5]:
     df = geojson_to_dataframe(gbif_bears_data)
-    st.caption(f"{len(df)} Bär-Sichtungen (DE + RO)" if not df.empty else "Keine Daten geladen (Haken bei „Externe Vergleichsdaten“ gesetzt?).")
+    st.caption(f"{len(df)} bear sightings (DE and RO)" if not df.empty else "No data loaded (is \"External reference data\" enabled?).")
     if not df.empty:
         st.dataframe(df, width="stretch")
 
@@ -491,13 +490,13 @@ with _table_tabs[5]:
 st.markdown(
     """
 ---
-### Über diese Anwendung
+### About this application
 
-Integriertes System für:
-1. **Japan Bear Deterrent System** – Abschreckungsgeräte und Kamerabilder in Japan
-2. **Carpathian Bears Movement** – Bewegungsmuster von Braunbären in den Karpaten
-3. **Bear Movement Simulation** – ML-basierte Vorhersage von Bärenbewegungen
+An integrated system covering:
+1. **Japan bear deterrent system** - deterrent devices and camera images in Japan
+2. **Carpathian bear movement** - movement patterns of brown bears in the Carpathians
+3. **Bear movement simulation** - model-based simulation of bear movement
 
-Entwickelt für Wildtierforschung und -management.
+Built for wildlife research and management.
 """
 )

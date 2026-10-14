@@ -1,46 +1,48 @@
 """
 maplibre_component.py
 =====================
-Gemeinsame MapLibre-Hauptkarte fuer alle drei Systeme.
+Shared MapLibre main map for all three subsystems.
 
-Bugfixes gegenueber vorheriger Version:
-  - setStyle() + map.once('style.load') + diff:false -> zuverlässige Layer-Wiederherstellung
-  - addLayer mit beforeId (vor erstem Symbol-Layer) -> Städte-/Ländernamen bleiben sichtbar
+Two implementation details worth noting:
+  - setStyle() combined with map.once('style.load') and diff:false gives
+    reliable layer restoration after a base map change.
+  - addLayer with beforeId (before the first symbol layer) keeps city and
+    country labels visible above the data layers.
 """
 
 import json
 import streamlit.components.v1 as components
 
 
-# Reihenfolge = Reihenfolge im Auswahlfeld. Satellit steht vorn, weil er
-# der Standard ist: fuer die Beurteilung von Baerenbewegungen zaehlt das
-# Gelaende (Wald, Lichtungen, Taeler), das auf einer Vektorkarte gar nicht
-# dargestellt wird. Die uebrigen Stile bleiben unveraendert waehlbar.
+# The order here is the order in the selection box. Satellite comes first
+# because it is the default: judging bear movement depends on the terrain
+# (forest, clearings, valleys), which a vector map does not show. All
+# other styles remain selectable.
 DEFAULT_BASEMAP = "Esri Satellite"
 
 BASEMAP_NAMES = ["Esri Satellite", "Esri Satellite + Beschriftung",
                  "Liberty", "Bright", "Positron", "Dark", "OSM Raster"]
 
-# Kostenfreie Hoehendaten ohne API-Schluessel (Quelle des offiziellen
-# MapLibre-3D-Terrain-Beispiels) - dieselbe wie in animation_component.py
-# und japan_map_component.py, damit sich alle drei Karten gleich verhalten.
+# Free elevation data without an API key (the source used by the official
+# MapLibre 3D terrain example), identical to animation_component.py and
+# japan_map_component.py so that all three maps behave the same.
 TERRAIN_TILEJSON = "https://tiles.mapterhorn.com/tilejson.json"
 
 
 def _build_styles():
-    """Alle Stile als dict {Name: URL-String oder Style-Objekt}."""
+    """All styles as a dict {name: URL string or style object}."""
     vector = {
         "Liberty":  "https://tiles.openfreemap.org/styles/liberty",
         "Bright":   "https://tiles.openfreemap.org/styles/bright",
         "Positron": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
         "Dark":     "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
     }
-    # Wichtig bei Raster-Quellen: maxzoom MUSS gesetzt sein, sonst fordert
-    # MapLibre beim Hineinzoomen Kacheln an, die es dort nicht gibt. Esri
-    # antwortet darauf nicht mit einem Fehler, sondern mit einer gueltigen
-    # Kachel mit dem Text "Map data not yet available" - die Karte sieht
-    # dann leer/kaputt aus. Mit maxzoom skaliert MapLibre stattdessen die
-    # letzte vorhandene Kachel hoch (leicht unscharf, aber immer Bild).
+    # Important for raster sources: maxzoom MUST be set, otherwise
+    # MapLibre requests tiles that do not exist when zooming in. Esri does
+    # not answer with an error but with a valid tile reading "Map data not
+    # yet available", which makes the map look empty or broken. With
+    # maxzoom, MapLibre upscales the last available tile instead:
+    # slightly blurry, but always an image.
     raster = {
         "OSM Raster": {
             "version": 8,
@@ -115,8 +117,9 @@ def render_maplibre(
     cp_paths      = carpathian.get("paths", _empty_fc())
     sim_points    = simulation.get("points", _empty_fc())
     sim_paths     = simulation.get("paths", _empty_fc())
-    # wolf_lynx / gbif_bears kommen bereits als fertige FeatureCollection
-    # (nicht wie die anderen als dict mit Unterkategorien) -> direkt uebernehmen.
+    # wolf_lynx and gbif_bears already arrive as a finished
+    # FeatureCollection rather than a dict of sub-categories, so they are
+    # taken over directly.
     wolf_lynx_fc  = wolf_lynx if wolf_lynx.get("type") == "FeatureCollection" else _empty_fc()
     gbif_bears_fc = gbif_bears if gbif_bears.get("type") == "FeatureCollection" else _empty_fc()
 
@@ -152,11 +155,11 @@ def render_maplibre(
         "gbif_bears":    json.dumps(gbif_bears_fc),
     }
 
-    # Welche Layer sollen beim Rendern schon angehakt sein?
-    # - initial_visible kommt aus den URL-Query-Parametern (letzter bekannter
-    #   Zustand vom Client) -> exakt das wiederherstellen.
-    # - Erststart (noch keine URL-Parameter, initial_visible is None) ->
-    #   alte Default-Logik: Simulation vorausgewaehlt, Rest aus.
+    # Which layers should already be ticked when rendering?
+    # - initial_visible comes from the URL query parameters, the last
+    #   known client state, and is restored exactly.
+    # - On a first start (no URL parameters yet, initial_visible is None)
+    #   the previous default applies: simulation preselected, rest off.
     if initial_visible is None:
         default_checked = {"simulation"} if has_simulation else set()
     else:
@@ -185,16 +188,16 @@ def render_maplibre(
         n = len(wolf_lynx_fc.get("features", []))
         chk = " checked" if "wolf_lynx" in default_checked else ""
         checkbox_rows += (f'<label><input type="checkbox" id="tg-wolf-lynx"{chk} /> '
-                          f'Wolf/Luchs (BfN) <span class="cnt">{n}</span>'
+                          f'Wolf/Lynx (BfN) <span class="cnt">{n}</span>'
                           f'<span class="dot" style="background:#5b3a29"></span></label>')
     if has_gbif_bears:
         n = len(gbif_bears_fc.get("features", []))
         chk = " checked" if "gbif_bears" in default_checked else ""
         checkbox_rows += (f'<label><input type="checkbox" id="tg-gbif-bears"{chk} /> '
-                          f'Bär-Sichtungen (GBIF) <span class="cnt">{n}</span>'
+                          f'Bear sightings (GBIF) <span class="cnt">{n}</span>'
                           f'<span class="dot" style="background:#c77b2e"></span></label>')
     if not checkbox_rows:
-        checkbox_rows = '<div class="muted">Keine Daten geladen.</div>'
+        checkbox_rows = '<div class="muted">No data loaded.</div>'
 
     bm_options = "".join(
         f'<option value="{name}"{" selected" if name == basemap else ""}>{name}</option>'
@@ -249,35 +252,35 @@ def render_maplibre(
 <body>
   <div id="map"></div>
   <div class="panel">
-    <div class="title">Layer anzeigen</div>
+    <div class="title">Show layers</div>
     {checkbox_rows}
     <div class="sep"></div>
-    <label class="bm-label">Kartenstil</label>
+    <label class="bm-label">Base map</label>
     <select id="basemap-select">{bm_options}</select>
-    <label><input type="checkbox" id="toggle-3d"{t3d_checked} /> 3D-Gelände</label>
-    <div class="terrain-note" id="terrain-note">Höhendaten nicht erreichbar – Karte bleibt in 2D.</div>
+    <label><input type="checkbox" id="toggle-3d"{t3d_checked} /> 3D terrain</label>
+    <div class="terrain-note" id="terrain-note">Elevation data unavailable; the map stays in 2D.</div>
   </div>
 
   <div class="panel draw-panel">
-    <div class="title">Neuer Eintrag (Japan)</div>
+    <div class="title">New entry (Japan)</div>
     <div class="draw-mode-row">
-      <button class="draw-mode-btn" id="mode-marker" title="Einzelnen Punkt setzen">📍 Marker</button>
-      <button class="draw-mode-btn" id="mode-polygon" title="Gebiet umranden">▱ Gebiet</button>
+      <button class="draw-mode-btn" id="mode-marker" title="Place a single point">Marker</button>
+      <button class="draw-mode-btn" id="mode-polygon" title="Outline an area">Area</button>
     </div>
-    <div class="draw-hint" id="draw-hint">Modus wählen, dann auf die Karte klicken.</div>
-    <input type="text" id="draw-name-input" placeholder="Name des Gebiets" />
+    <div class="draw-hint" id="draw-hint">Choose a mode, then click on the map.</div>
+    <input type="text" id="draw-name-input" placeholder="Name of the area" />
     <div class="draw-actions">
-      <button id="draw-undo-btn" style="display:none">↩ Letzten Punkt entfernen</button>
-      <button id="draw-cancel-btn" style="display:none">✕ Abbrechen</button>
-      <button id="draw-save-btn" disabled>💾 Speichern</button>
+      <button id="draw-undo-btn" style="display:none">Undo last point</button>
+      <button id="draw-cancel-btn" style="display:none">Cancel</button>
+      <button id="draw-save-btn" disabled>Save</button>
     </div>
   </div>
 
   <script>
     const STYLES = {styles_js};
-    // Layer, deren Daten sich seit dem letzten Rendern geaendert haben
-    // (z.B. anderer Baer/Zeitraum ausgewaehlt) -> beim Laden automatisch
-    // dorthin navigieren, auch wenn der Layer schon vorher sichtbar war.
+    // Layers whose data changed since the last render, for example a
+    // different bear or period. On load the map navigates to them
+    // automatically, even if the layer was already visible.
     const REFIT_ON_LOAD = {refit_json};
     const DATA = {{
       jp_deterrents: {data["jp_deterrents"]},
@@ -311,20 +314,20 @@ def render_maplibre(
       style: STYLES["{basemap}"],
       center: [{center_lng}, {center_lat}],
       zoom: {zoom},
-      maxPitch: 85   // ohne das laesst sich die Kamera nicht in die 3D-Schraege neigen
+      maxPitch: 85   // without this the camera cannot be pitched into the 3D view
     }});
-    // visualizePitch zeigt die Neigung im Kompass - im 3D-Modus sonst schwer
-    // zu erkennen, in welcher Schraege man gerade steht.
+    // visualizePitch shows the pitch in the compass; otherwise it is hard
+    // to tell which inclination the view is currently at.
     map.addControl(new maplibregl.NavigationControl({{ visualizePitch:true }}), 'top-right');
 
     // -------------------------------------------------------
-    // Zustand (Center/Zoom/Basemap/sichtbare Layer) in die URL des
-    // umgebenden Streamlit-Fensters schreiben. So kann Python beim naechsten
-    // Rerun (z.B. Filter "Anwenden") ueber st.query_params genau dort wieder
-    // starten, statt die Karte auf die Default-Ansicht zurueckzusetzen.
-    // Kein echter Rueckkanal (das koennte nur eine declare_component()-
-    // Loesung), aber ausreichend, um den Kamera-/Layer-Zustand zwischen
-    // Reruns "mitzunehmen".
+    // Write the state (centre, zoom, base map, visible layers) into the
+    // URL of the surrounding Streamlit window. On the next rerun, for
+    // example after applying a filter, Python can read it through
+    // st.query_params and resume exactly there instead of resetting the
+    // map to the default view. This is not a true return channel, which
+    // would require declare_component(), but it is sufficient to carry
+    // the camera and layer state across reruns.
     // -------------------------------------------------------
     let currentStyleName = "{basemap}";
 
@@ -355,8 +358,8 @@ def render_maplibre(
         const newUrl = parentWin.location.pathname + '?' + params.toString() + parentWin.location.hash;
         parentWin.history.replaceState(null, '', newUrl);
       }} catch (e) {{
-        // z.B. Cross-Origin-Restriktion -> stumm ignorieren, Karte bleibt
-        // trotzdem normal nutzbar, nur ohne Zustands-Persistenz.
+        // For example a cross-origin restriction: ignored silently, the
+        // map stays fully usable, only without state persistence.
       }}
     }}
 
@@ -364,9 +367,9 @@ def render_maplibre(
 
     // -------------------------------------------------------
     // FIX 2: ID des ersten Symbol-Layers finden.
-    // Eigene Layer werden DAVOR eingefuegt, damit Vektor-Labels
-    // (Stadte, Laender) weiterhin UEBER unseren Daten gerendert werden.
-    // Rasterstile haben keine Symbol-Layer -> beforeId = undefined -> normal anhaengen.
+    // Own layers are inserted BEFORE it, so that vector labels (cities,
+    // countries) are still rendered ABOVE the data.
+    // Raster styles have no symbol layers, so beforeId stays undefined and the layer is appended.
     // -------------------------------------------------------
     function firstSymbolLayerId() {{
       const layers = (map.getStyle() || {{}}).layers || [];
@@ -382,10 +385,10 @@ def render_maplibre(
     }}
 
     // -------------------------------------------------------
-    // 3D-Gelaende (uebernommen aus animation_component.py - gleiche
-    // Bedienung und gleiches Fehlerverhalten: sind die Hoehendaten nicht
-    // erreichbar, bleibt die Karte in 2D voll nutzbar, der Schalter springt
-    // zurueck und es erscheint ein Hinweis statt eines Fehlers.)
+    // 3D terrain, taken from animation_component.py with the same
+    // controls and the same failure behaviour: if the elevation data
+    // cannot be reached the map stays fully usable in 2D, the toggle
+    // resets itself and a note is shown instead of an error.
     // -------------------------------------------------------
     let terrain3d = {t3d_js};
 
@@ -402,7 +405,7 @@ def render_maplibre(
           map.easeTo({{ pitch:0, duration:500 }});
         }}
       }} catch (e) {{
-        console.warn('Terrain konnte nicht gesetzt werden:', e);
+        console.warn('Terrain could not be applied:', e);
         showTerrainNote();
       }}
     }}
@@ -415,7 +418,7 @@ def render_maplibre(
       terrain3d = false;
     }}
 
-    // Fehlende Hoehen-Kacheln melden, ohne die Karte zu blockieren
+    // Report missing elevation tiles without blocking the map
     map.on('error', (e) => {{
       const msg = (e && e.error && e.error.message) || '';
       if (terrain3d && /terrain|dem|mapterhorn/i.test(msg)) showTerrainNote();
@@ -434,19 +437,19 @@ def render_maplibre(
     function addSourcesAndLayers() {{
       const addSrc = (id, d) => {{ if (!map.getSource(id)) map.addSource(id, {{ type:'geojson', data:d }}); }};
 
-      // Hoehenmodell + Schummerung: macht Hangrichtung und Gelaendeform
-      // sichtbar, was im reinen Luftbild oft schwer zu erkennen ist. Die
-      // Schummerung wird zusammen mit 3D ein-/ausgeschaltet und ganz unten
-      // eingehaengt, damit alle Datenebenen darueber lesbar bleiben.
+      // Elevation model and hillshading make slope direction and
+      // landform visible, which is often hard to read on imagery alone.
+      // Hillshading is toggled together with 3D and inserted at the
+      // bottom so that all data layers above it stay readable.
       if (!map.getSource('terrain-dem')) {{
         try {{ map.addSource('terrain-dem', {{ type:'raster-dem', url:TERRAIN_TILEJSON }}); }}
-        catch (e) {{ console.warn('Terrain-Quelle nicht verfuegbar:', e); }}
+        catch (e) {{ console.warn('Terrain source unavailable:', e); }}
       }}
-      // addLayerSafe haengt vor dem ersten Symbol-Layer ein. Weil die
-      // Schummerung VOR allen Datenebenen angelegt wird und diese danach an
-      // derselben Stelle eingefuegt werden, landen sie automatisch darueber.
-      // Bei Rasterstilen (Satellit) gibt es keine Symbol-Layer -> die
-      // Schummerung wird schlicht auf das Luftbild gelegt.
+      // addLayerSafe inserts before the first symbol layer. Because
+      // hillshading is created BEFORE all data layers and those are then
+      // inserted at the same position, they automatically end up above
+      // it. Raster styles such as satellite have no symbol layers, so
+      // hillshading is simply placed on top of the imagery.
       if (map.getSource('terrain-dem')) {{
         addLayerSafe({{ id:'hillshade', type:'hillshade', source:'terrain-dem',
           layout:{{ visibility:'none' }},
@@ -473,9 +476,9 @@ def render_maplibre(
       addLayerSafe({{ id:'jp-markers', type:'circle', source:'jp_markers',
         paint:{{ 'circle-radius':7,'circle-color':'#3186cc','circle-stroke-width':2,'circle-stroke-color':'#fff' }} }});
 
-      // Temporaere Vorschau beim Zeichnen (noch nicht gespeichert) - eigene,
-      // klar unterscheidbare Farbe/Form, damit nicht mit bereits
-      // gespeicherten Eintraegen verwechselt wird.
+      // Temporary preview while drawing, before anything is saved. It
+      // uses a clearly distinct colour and shape so it cannot be confused
+      // with already stored entries.
       addSrc('draw_marker_preview', {{ type:'FeatureCollection', features:[] }});
       addSrc('draw_polygon_preview', {{ type:'FeatureCollection', features:[] }});
       addSrc('draw_polygon_points', {{ type:'FeatureCollection', features:[] }});
@@ -502,8 +505,8 @@ def render_maplibre(
                  'line-color':['coalesce',['get','color'],'#1565c0'],
                  'line-dasharray':[2,2],
                  'line-opacity':0.9 }} }});
-      // Punkte: echte Schritte (blau, größer) + Alternativen (orange, kleiner)
-      // Farbe und Radius werden per Feature-Property gesteuert.
+      // Points: real steps (blue, larger) and alternatives (orange,
+      // smaller). Colour and radius are driven by feature properties.
       addLayerSafe({{ id:'sim-points', type:'circle', source:'sim_points',
         paint:{{
           'circle-color': ['coalesce',['get','color'],'#ff9800'],
@@ -514,23 +517,23 @@ def render_maplibre(
         }} }});
 
       // WOLF/LUCHS (BfN, besetzte 10x10km Rasterzellen als Polygone).
-      // Bewusst nur duenner Umriss statt kraeftiger Flaechenfuellung: die
-      // Zelle bedeutet "irgendwo hier mind. 1 C1/C2-Nachweis", nicht eine
-      // praezise Position. Eine kraeftige Fuellung wuerde eine Genauigkeit
-      // vortaeuschen, die die Daten nicht hergeben - und mehrere angrenzende
-      // Zellen wirken sonst wie eine durchgehende Flaeche ("Blanket-Effekt").
+      // Deliberately only a thin outline instead of a solid fill: a cell
+      // means "at least one C1/C2 record somewhere in here", not a precise
+      // position. A solid fill would suggest an accuracy the data does not
+      // support, and several adjacent cells would read as one continuous
+      // area.
       addLayerSafe({{ id:'wolf-lynx-fill', type:'fill', source:'wolf_lynx',
         paint:{{ 'fill-color':['coalesce',['get','color'],'#5b3a29'],'fill-opacity':0.08 }} }});
       addLayerSafe({{ id:'wolf-lynx-line', type:'line', source:'wolf_lynx',
         paint:{{ 'line-color':['coalesce',['get','color'],'#5b3a29'],'line-width':1.2,'line-opacity':0.8 }} }});
 
-      // BÄR-SICHTUNGEN (GBIF, Punkte DE+RO)
+      // BEAR SIGHTINGS (GBIF, points for DE and RO)
       addLayerSafe({{ id:'gbif-bears-points', type:'circle', source:'gbif_bears',
         paint:{{ 'circle-radius':5,'circle-opacity':0.85,'circle-stroke-width':1,'circle-stroke-color':'#fff',
                  'circle-color':['coalesce',['get','color'],'#5b3a29'] }} }});
     }}
 
-    // Sichtbarkeit aus den Checkboxen (DOM bleibt erhalten) wiederherstellen
+    // Restore visibility from the checkboxes; the DOM is preserved
     function applyVisibilityFromCheckboxes() {{
       Object.values(GROUPS).forEach(g => {{
         const cb = document.getElementById(g.id);
@@ -539,7 +542,7 @@ def render_maplibre(
     }}
 
     // -------------------------------------------------------
-    // Popups (werden nur einmal registriert)
+    // Popups, registered only once
     // -------------------------------------------------------
     function wirePopups() {{
       const pop = (e, html) => new maplibregl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
@@ -567,26 +570,26 @@ def render_maplibre(
       map.on('click','sim-points',(e)=>{{ const p=e.features[0].properties||{{}};
         const isReal = p.type==='real';
         const isAlt  = p.type==='alternative';
-        const title  = isReal ? 'Echter GPS-Schritt' : isAlt ? 'Simulierte Alternative' : 'Simulation';
+        const title  = isReal ? 'Real GPS step' : isAlt ? 'Simulated alternative' : 'Simulation';
         const col    = p.color||'#e8830c';
-        let details  = '<b>Bär:</b> '+(p.bear_id||'')+'<br>';
-        if (isReal) details += '<b>Zeit:</b> '+(p.timestamp||'')+'<br><b>Saison:</b> '+(p.season||'')+'<br><b>Schrittlänge:</b> '+(p.length_m?Math.round(p.length_m)+'m':'')+'<br>';
-        if (isAlt)  details += '<b>Schritt #:</b> '+(p.step_idx||'')+'<br><b>Sim. Länge:</b> '+(p.length_m?Math.round(p.length_m)+'m':'')+'<br><b>Richtung:</b> '+(p.angle?Math.round(p.angle)+'°':'')+'<br>';
+        let details  = '<b>Bear:</b> '+(p.bear_id||'')+'<br>';
+        if (isReal) details += '<b>Time:</b> '+(p.timestamp||'')+'<br><b>Season:</b> '+(p.season||'')+'<br><b>Step length:</b> '+(p.length_m?Math.round(p.length_m)+' m':'')+'<br>';
+        if (isAlt)  details += '<b>Step no.:</b> '+(p.step_idx||'')+'<br><b>Simulated length:</b> '+(p.length_m?Math.round(p.length_m)+' m':'')+'<br><b>Heading:</b> '+(p.angle?Math.round(p.angle)+' deg':'')+'<br>';
         pop(e,'<h3>'+title+' <span style=\\"display:inline-block;width:10px;height:10px;border-radius:50%;background:'+col+';vertical-align:middle\\"></span></h3>'+details); }});
 
       map.on('click','wolf-lynx-fill',(e)=>{{ const p=e.features[0].properties||{{}};
         const isWolf = (p.REFERENCESPECIESNAME||'').toLowerCase().includes('lupus') || p.species==='wolf';
-        const title  = isWolf ? 'Wolf' : 'Luchs';
-        pop(e,'<h3>'+title+' (BfN-Monitoring)</h3>'+
-              '<b>Rasterzelle:</b> '+(p.ID_LOCALID||p.GmlID||'')+
-              '<br><span style=\\"font-size:12px;color:#555\\">Mind. 1 bestätigter Nachweis (C1/C2: Genetik, '+
-              'Foto, Spur, Riss o.ä.) irgendwo in dieser 10x10km-Zelle - keine exakte Position.</span>'+
-              '<br><span style=\\"font-size:11px;color:#777\\">Quelle: geodienste.bfn.de, kostenfrei nutzbar</span>'); }});
+        const title  = isWolf ? 'Wolf' : 'Lynx';
+        pop(e,'<h3>'+title+' (BfN monitoring)</h3>'+
+              '<b>Grid cell:</b> '+(p.ID_LOCALID||p.GmlID||'')+
+              '<br><span style=\\"font-size:12px;color:#555\\">At least one confirmed record (C1/C2: genetics, '+
+              'photo, track or kill) somewhere in this 10x10 km cell, not an exact position.</span>'+
+              '<br><span style=\\"font-size:11px;color:#777\\">Source: geodienste.bfn.de, free to use</span>'); }});
       map.on('mouseenter','wolf-lynx-fill',()=>map.getCanvas().style.cursor='pointer');
       map.on('mouseleave','wolf-lynx-fill',()=>map.getCanvas().style.cursor='');
 
       map.on('click','gbif-bears-points',(e)=>{{ const p=e.features[0].properties||{{}};
-        const link = p.gbif_url ? '<br><a href=\\"'+p.gbif_url+'\\" target=\\"_blank\\" rel=\\"noopener\\">Datensatz auf GBIF ansehen</a>' : '';
+        const link = p.gbif_url ? '<br><a href=\\"'+p.gbif_url+'\\" target=\\"_blank\\" rel=\\"noopener\\">View record on GBIF</a>' : '';
         const img = p.image_url ? '<br><img src=\\"'+p.image_url+'\\" style=\\"max-width:220px;max-height:160px;border-radius:6px;margin-top:6px;display:block\\" loading=\\"lazy\\" onerror=\\"this.style.display=\\'none\\'\\" />' : '';
         pop(e,'<h3>'+(p.scientific_name||'Ursus arctos')+'</h3>'+
               '<b>Land:</b> '+(p.country||'')+
@@ -599,9 +602,9 @@ def render_maplibre(
     // -------------------------------------------------------
     // Bounds + Toggle + Kartenstil-Wechsel
     // -------------------------------------------------------
-    // Koordinate ist gueltig wenn sie nicht (0,0) oder fast (0,0) ist.
-    // Devices ohne GPS werden mit lat=0, lng=0 gespeichert und
-    // wuerden sonst fitBounds auf Weltansicht aufweiten.
+    // A coordinate counts as valid when it is not (0,0) or close to it.
+    // Devices without GPS are stored as lat=0, lng=0 and would otherwise
+    // widen fitBounds to a world view.
     function isValidCoord(c) {{
       return Math.abs(c[0]) > 0.01 || Math.abs(c[1]) > 0.01;
     }}
@@ -631,7 +634,7 @@ def render_maplibre(
     // Feste Zoom-Ziele pro System (vermeidet fitBounds-Probleme mit (0,0)-Koordinaten)
     const ZOOM_TARGETS = {{
       japan:      {{ center: [139.93, 37.48], zoom: 11 }},
-      carpathian: {{ center: null, zoom: 8 }},   // dynamisch via fitBounds (Daten haben valide Koordinaten)
+      carpathian: {{ center: null, zoom: 8 }},   // dynamic via fitBounds (the data has valid coordinates)
       simulation: {{ center: null, zoom: 8 }},   // dynamisch via fitBounds
       wolf_lynx:  {{ center: null, zoom: 6 }},   // dynamisch, deckt ganz Deutschland ab
       gbif_bears: {{ center: null, zoom: 5 }}    // dynamisch, deckt DE+RO ab
@@ -641,10 +644,10 @@ def render_maplibre(
       const g = GROUPS[groupKey];
       const t = ZOOM_TARGETS[groupKey];
       if (t.center) {{
-        // Festes Ziel (z.B. Japan) -> kein fitBounds noetig
+        // Fixed target, for example Japan, so no fitBounds is needed
         map.flyTo({{ center: t.center, zoom: t.zoom, duration: 800 }});
       }} else {{
-        // Dynamisch: fitBounds aus den Daten
+        // Dynamic: fitBounds derived from the data
         const b = boundsOf(g.fcs);
         if (b) map.fitBounds(b, {{ padding: 60, maxZoom: 12, duration: 800 }});
       }}
@@ -658,18 +661,18 @@ def render_maplibre(
     }}
 
     // -------------------------------------------------------
-    // ZEICHNEN: neue Marker/Gebiete erfassen und speichern.
+    // DRAWING: capture and save new markers and areas.
     //
-    // Technischer Kniff, weil MapLibre hier per components.html() (reines
-    // HTML/JS im iframe) eingebettet ist, nicht als echte bidirektionale
-    // Streamlit-Komponente: Gezeichnete Daten koennen NICHT direkt als
-    // Python-Rueckgabewert zurueckfliessen. Stattdessen (wiederverwendet
-    // dasselbe Prinzip wie saveStateToUrl() oben, aber AKTIV statt passiv):
-    // beim Speichern wird die Geometrie in die URL geschrieben und eine
-    // ECHTE Navigation ausgeloest (location.href, nicht nur
-    // history.replaceState) - das laedt die Streamlit-Seite neu, Python
-    // liest die neuen Query-Parameter aus, speichert in die Datenbank und
-    // entfernt die Parameter wieder (siehe map.py).
+    // MapLibre is embedded here through components.html(), that is, plain
+    // HTML and JavaScript in an iframe, not as a true bidirectional
+    // Streamlit component. Drawn data therefore cannot flow back to
+    // Python as a return value. Instead, reusing the same principle as
+    // saveStateToUrl() above but actively rather than passively, saving
+    // writes the geometry into the URL and triggers a
+    // REAL navigation (location.href rather than only
+    // history.replaceState). That reloads the Streamlit page, Python
+    // reads the new query parameters, stores them in the database and
+    // removes the parameters again (see map.py).
     // -------------------------------------------------------
     const drawState = {{ mode: null, polygonPoints: [] }};
 
@@ -725,7 +728,7 @@ def render_maplibre(
         drawState.mode = null;
         document.getElementById('mode-marker').classList.remove('active');
         document.getElementById('mode-polygon').classList.remove('active');
-        setDrawHint('Modus wählen, dann auf die Karte klicken.');
+        setDrawHint('Choose a mode, then click on the map.');
       }}
     }}
 
@@ -733,7 +736,7 @@ def render_maplibre(
       if (drawState.mode === 'marker') {{
         drawState.pendingMarker = e.lngLat;
         updateMarkerPreview(e.lngLat);
-        setDrawHint(`Punkt gewählt (${{e.lngLat.lat.toFixed(5)}}, ${{e.lngLat.lng.toFixed(5)}}). Speichern oder neu klicken.`);
+        setDrawHint(`Point selected (${{e.lngLat.lat.toFixed(5)}}, ${{e.lngLat.lng.toFixed(5)}}). Save, or click again.`);
         document.getElementById('draw-cancel-btn').style.display = 'block';
         updateSaveButtonState();
       }} else if (drawState.mode === 'polygon') {{
@@ -745,8 +748,8 @@ def render_maplibre(
         if (drawState.polygonPoints.length >= 3) {{
           nameInput.style.display = 'block';
         }}
-        setDrawHint(`${{drawState.polygonPoints.length}} Punkt(e) gesetzt` +
-          (drawState.polygonPoints.length < 3 ? ' (mind. 3 nötig).' : ' - Name eingeben, dann speichern.'));
+        setDrawHint(`${{drawState.polygonPoints.length}} point(s) placed` +
+          (drawState.polygonPoints.length < 3 ? ' (at least 3 required).' : ' - enter a name, then save.'));
         updateSaveButtonState();
       }}
     }}
@@ -765,9 +768,9 @@ def render_maplibre(
         }} else {{
           return;
         }}
-        parentWin.location.href = url.toString(); // ECHTE Navigation, loest Streamlit-Rerun aus
+        parentWin.location.href = url.toString(); // real navigation, triggers a Streamlit rerun
       }} catch (e) {{
-        setDrawHint('Speichern fehlgeschlagen (Cross-Origin?). Bitte Seite manuell neu laden und erneut versuchen.');
+        setDrawHint('Saving failed (cross-origin?). Reload the page manually and try again.');
       }}
     }}
 
@@ -776,21 +779,21 @@ def render_maplibre(
         resetDrawing(false);
         drawState.mode = 'marker';
         document.getElementById('mode-marker').classList.add('active');
-        setDrawHint('Auf die Karte klicken, um den Marker-Standort zu wählen.');
+        setDrawHint('Click on the map to choose the marker location.');
         map.getCanvas().style.cursor = 'crosshair';
       }});
       document.getElementById('mode-polygon').addEventListener('click', () => {{
         resetDrawing(false);
         drawState.mode = 'polygon';
         document.getElementById('mode-polygon').classList.add('active');
-        setDrawHint('Punkte für die Gebietsgrenze anklicken (mind. 3).');
+        setDrawHint('Click points for the area boundary (at least 3).');
         map.getCanvas().style.cursor = 'crosshair';
       }});
       document.getElementById('draw-undo-btn').addEventListener('click', () => {{
         drawState.polygonPoints.pop();
         updatePolygonPreview();
         if (drawState.polygonPoints.length < 3) document.getElementById('draw-name-input').style.display = 'none';
-        setDrawHint(`${{drawState.polygonPoints.length}} Punkt(e) gesetzt.`);
+        setDrawHint(`${{drawState.polygonPoints.length}} point(s) placed.`);
         updateSaveButtonState();
       }});
       document.getElementById('draw-cancel-btn').addEventListener('click', () => {{
@@ -810,10 +813,9 @@ def render_maplibre(
       bind('japan'); bind('carpathian'); bind('simulation'); bind('wolf_lynx'); bind('gbif_bears');
 
       // -------------------------------------------------------
-      // FIX 1: Kartenstil-Wechsel
-      //   map.once('style.load', ...) nach jedem setStyle() stellt
-      //   Layer sicher NACH dem vollstaendigen Style-Reset wieder her.
-      //   diff:false -> sauberer Reset ohne Race Condition.
+      // Base map change: calling map.once('style.load', ...) after every
+      // setStyle() restores the layers only AFTER the style reset has
+      // completed. diff:false forces a clean reset without a race.
       // -------------------------------------------------------
       const sel = document.getElementById('basemap-select');
       if (sel) sel.addEventListener('change', e => {{
@@ -822,8 +824,8 @@ def render_maplibre(
         map.once('style.load', () => {{
           addSourcesAndLayers();
           applyVisibilityFromCheckboxes();
-          // Nach einem Stilwechsel sind Terrain und Schummerung weg -
-          // war 3D aktiv, hier wieder setzen.
+          // A style change removes terrain and hillshading, so restore
+          // them here if 3D was active.
           if (terrain3d) applyTerrain(true);
         }});
         saveStateToUrl();
@@ -836,8 +838,8 @@ def render_maplibre(
         saveStateToUrl();
       }});
 
-      // Kamera-Position (Pan/Zoom) laufend merken, debounced damit nicht
-      // bei jedem einzelnen Drag-Frame geschrieben wird.
+      // Continuously remember the camera position (pan and zoom),
+      // debounced so it is not written on every drag frame.
       map.on('moveend', saveStateDebounced);
     }}
 
@@ -845,15 +847,15 @@ def render_maplibre(
     map.on('load', () => {{
       addSourcesAndLayers();
       applyVisibilityFromCheckboxes();
-      if (terrain3d) applyTerrain(true);   // Zustand aus der URL wiederherstellen
+      if (terrain3d) applyTerrain(true);   // restore the state from the URL
       wirePopups();
       wireControls();
       wireDrawingControls();
 
-      // Fuer bereits sichtbare Layer, deren Daten sich geaendert haben
-      // (z.B. neuer Baer/Zeitraum via "Anwenden"), zur neuen Position fliegen -
-      // sonst bleibt die Kamera an der alten Stelle stehen (Persistenz-Fix),
-      // obwohl dort gar keine Daten des neu gewaehlten Filters liegen.
+      // For layers that are already visible but whose data changed, for
+      // example a different bear or period, fly to the new position.
+      // Otherwise the camera would stay where the URL persistence put it,
+      // in a place that holds no data for the newly selected filter.
       let didRefit = false;
       REFIT_ON_LOAD.forEach(key => {{
         const g = GROUPS[key];

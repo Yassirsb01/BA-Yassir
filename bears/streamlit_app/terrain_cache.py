@@ -1,39 +1,36 @@
 """
 terrain_cache.py
 =================
-Lokaler Cache fuer OpenStreetMap-Gelaendeabfragen (Overpass API), damit
-TerrainFeatureSet/OSM.py nicht bei jedem einzelnen Simulationsschritt live
-abgefragt werden muss.
+Local cache for OpenStreetMap terrain queries (Overpass API), so that
+TerrainFeatureSet/OSM.py does not have to be queried live for every single
+simulation step.
 
-Warum das noetig ist (siehe Recherche-Ergebnis zur Maplibre/Simulation-
-Optimierung): Die oeffentliche Overpass-API hat nachweislich Rate-Limits
-und wiederkehrende Stabilitaetsprobleme. Bei einer Simulation mit vielen
-Schritten (und pro Schritt mehreren Kandidatenrichtungen) waere das sonst
-der Flaschenhals bzw. Absturzpunkt des Systems.
+Rationale: the public Overpass API enforces rate limits and shows recurring
+stability problems. A simulation with many steps, each evaluating several
+candidate headings, would otherwise make the terrain lookup the bottleneck
+and the most likely point of failure in the system.
 
-Wichtig (Update nach echtem Testlauf 25.08.2026): Overpass hat bei
-schnellen, direkt aufeinanderfolgenden Anfragen ohne eigenen User-Agent
-mit HTTP 406 ("Not Acceptable") geantwortet - vermutlich eine
-Bot-/Abuse-Schutzmassnahme des Servers. Dieses Modul schickt daher NICHT
-mehr ueber OSM.py's rohen requests.post(), sondern:
-  - mit einem eindeutigen User-Agent-Header (von Overpass empfohlen)
-  - mit einer kleinen Pause vor jeder echten Anfrage (Selbst-Drosselung)
-  - mit Wiederholungsversuchen (steigende Wartezeit) bei einzelnen Fehlern
-  - mit einem "Circuit Breaker": nach mehreren Fehlern IN FOLGE wird die
-    Terrain-Abfrage fuer den Rest des Laufs automatisch abgeschaltet
-    (Simulation laeuft dann einfach ohne Gelaende-Gewichtung weiter,
-    statt sich an hunderten Fehlversuchen aufzuhaengen)
+Request handling: Overpass responded with HTTP 406 ("Not Acceptable") to
+rapid consecutive requests that carried no dedicated user agent, which is
+presumably a bot protection measure. This module therefore does not use the
+raw requests.post() call from OSM.py but sends requests
 
-Update 21.09.2026 - Offline-Betrieb: Mit prefetch_terrain.py kann das
-gesamte Kameragebiet EINMALIG vorab geladen werden. Innerhalb eines so
-vorberechneten Gebiets stellt get_features() NIE eine Internet-Anfrage -
-fehlender Eintrag bedeutet dort "nachweislich keine Merkmale". Die
-Live-Abfrage unten ist nur noch Rueckfall fuer Punkte ausserhalb.
+  - with a distinct User-Agent header, as recommended by Overpass,
+  - with a short pause before every real request (self-throttling),
+  - with retries using increasing wait times on individual failures,
+  - behind a circuit breaker: after several consecutive failures the
+    terrain lookup is disabled for the remainder of the run, so the
+    simulation continues without terrain weighting instead of stalling on
+    hundreds of failed attempts.
 
-Funktionsweise (Cache): Koordinaten werden auf ein Raster gerundet
-(Standard ca. 150m Kantenlaenge), damit nahegelegene Simulationsschritte
-denselben Cache-Eintrag wiederverwenden statt jedes Mal neu abzufragen.
-Ergebnisse landen dauerhaft in SQLite.
+Offline operation: tools/prefetch_terrain.py can load the entire camera
+area once in advance. Inside such a prefetched area get_features() never
+issues an internet request; a missing entry there means "no features
+present". The live query below is only a fallback for points outside.
+
+Caching strategy: coordinates are rounded to a grid (about 150 m edge
+length by default) so that nearby simulation steps reuse the same cache
+entry instead of triggering a new query. Results are persisted in SQLite.
 """
 
 import json
@@ -48,51 +45,50 @@ _SIM_DIR = os.path.join(_HERE, "bear_simulation")
 
 DEFAULT_CACHE_DB = os.path.join(_SIM_DIR, "data", "terrain_cache.db")
 
-# Rasterweite in Grad (~150m in Mitteleuropa/Japan). Kleiner = praeziser,
-# aber mehr Overpass-Anfragen; groesser = weniger Anfragen, groebere Aufloesung.
+# Grid size in degrees (roughly 150 m at these latitudes). Smaller values
+# are more precise but cause more Overpass requests; larger values mean
+# fewer requests at a coarser resolution.
 GRID_SIZE_DEG = 0.0015
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 
-# Unabhaengige Spiegelserver (andere Betreiber, andere Domains). Falls
-# overpass-api.de bei dir blockiert/nicht erreichbar ist (z.B. durch eine
-# Netzwerk-Firewall), sind diese trotzdem oft erreichbar, weil sie
-# technisch nichts miteinander zu tun haben.
+# Independent mirrors run by different operators on different domains. If
+# overpass-api.de is unreachable, for example because of a network firewall,
+# these are often still reachable since they share no infrastructure.
 OVERPASS_URLS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
 ]
 
-# Overpass bittet Nutzer explizit um einen eindeutigen User-Agent statt des
-# generischen "python-requests/x.x" (das manche Server als Bot blocken).
-HEADERS = {"User-Agent": "OTH-Regensburg-WildlifeTracking/1.0 (Bachelorarbeit, nicht-kommerziell)"}
+# Overpass explicitly asks clients for a distinct user agent instead of the
+# generic "python-requests/x.x", which some servers block as a bot.
+HEADERS = {"User-Agent": "OTH-Regensburg-WildlifeTracking/1.0 (academic, non-commercial)"}
 
-# Standard-Tags, dieselben wie in Fabians OSM.py, damit die Ergebnisse
-# vergleichbar bleiben.
+# Default tags, identical to those in OSM.py of the movement simulation, so
+# that results stay comparable.
 DEFAULT_QUERY_ELEMENTS = {
     "way": ["landuse", "natural", "waterway", "water", "aerialway", "geological", "railway",
             "military", "highway", "place", "barrier", "leisure", "power"],
     "node": ["landuse", "natural", "geological"],
 }
 
-MIN_SECONDS_BETWEEN_REQUESTS = 1.2  # Selbst-Drosselung
-CONSECUTIVE_FAILURES_BEFORE_GIVING_UP = 2  # war 3 - bei wiederholt unzuverlaessigem Netz schneller aufgeben
-REQUEST_TIMEOUT_SECONDS = 6  # war 15 - haelt den Schaden pro Fehlversuch kleiner
+MIN_SECONDS_BETWEEN_REQUESTS = 1.2       # self-throttling
+CONSECUTIVE_FAILURES_BEFORE_GIVING_UP = 2  # give up early on unreliable networks
+REQUEST_TIMEOUT_SECONDS = 6              # limits the cost of each failed attempt
 
 
 class TerrainCache:
     """
-    WICHTIG: Der Circuit Breaker (_consecutive_failures / _giving_up) ist
-    bewusst auf KLASSENEBENE (nicht pro Instanz) gehalten. Grund: Bei
-    mehreren simulierten Baeren wird pro Baer potenziell eine eigene
-    TerrainCache()-Instanz erzeugt - waere der Zaehler an die Instanz
-    gebunden, wuerde er bei jedem neuen Baeren wieder bei 0 anfangen und
-    nie wirklich "aufgeben", selbst wenn das Netzwerk erkennbar nicht
-    erreichbar ist (genau das Verhalten, das im echten Testlauf am
-    15.09.2026 beobachtet wurde: >8 Fehlversuche ohne dass die
-    Abschalt-Meldung je kam). Klassenebene loest das unabhaengig davon,
-    wo/wie oft im Aufrufercode neue Instanzen erzeugt werden.
+    Cached access to OpenStreetMap terrain features on a fixed grid.
+
+    The circuit breaker state (_consecutive_failures / _giving_up) is held
+    at CLASS level rather than per instance. With several simulated bears a
+    separate TerrainCache() instance may be created per bear; if the
+    counter belonged to the instance it would restart at zero for every
+    bear and never actually trip, even when the network is demonstrably
+    unreachable. Class level makes the behaviour independent of how often
+    calling code constructs new instances.
     """
     _consecutive_failures = 0
     _giving_up = False
@@ -106,22 +102,20 @@ class TerrainCache:
 
     @classmethod
     def reset_circuit_breaker(cls):
-        """Setzt den Circuit Breaker manuell zurueck (z.B. fuer einen neuen,
-        unabhaengigen Simulationslauf oder zum Testen)."""
+        """Reset the circuit breaker manually, for example before an
+        independent simulation run or in tests."""
         cls._consecutive_failures = 0
         cls._giving_up = False
 
     def _init_db(self):
         """
-        Legt die Tabellen an. Ist die Datei KEINE gueltige SQLite-Datenbank
-        (schon zweimal vorgekommen: einmal war terrain_cache.db mit dem
-        Quelltext von terrain_cache.py ueberschrieben), wirft sqlite3 hier
-        einen DatabaseError. Der darf die Anwendung nicht mitreissen: die
-        Gelaendegewichtung ist ein Komfortmerkmal, die Simulation laeuft
-        auch ohne sie. Deshalb wird der Cache in diesem Fall deaktiviert
-        (self.disabled) und der Grund in self.disabled_reason hinterlegt,
-        damit die Oberflaeche eine verstaendliche Warnung zeigen kann,
-        statt mit einem Traceback abzubrechen.
+        Create the tables. If the file is not a valid SQLite database,
+        sqlite3 raises a DatabaseError here. That must not bring down the
+        application: terrain weighting is a convenience feature and the
+        simulation runs without it. The cache is therefore disabled
+        (self.disabled) and the reason recorded in self.disabled_reason, so
+        the user interface can show a comprehensible warning instead of
+        aborting with a traceback.
         """
         self.disabled = False
         self.disabled_reason = ""
@@ -130,9 +124,9 @@ class TerrainCache:
         except sqlite3.DatabaseError as e:
             self.disabled = True
             self.disabled_reason = (
-                f"Gelaende-Cache '{self.db_path}' ist keine gueltige SQLite-Datei ({e}). "
-                "Die Simulation laeuft ohne Gelaendegewichtung weiter. "
-                "Neu aufbauen mit: python prefetch_terrain.py --from-file "
+                f"Terrain cache '{self.db_path}' is not a valid SQLite file ({e}). "
+                "The simulation continues without terrain weighting. "
+                "Rebuild with: python tools/prefetch_terrain.py --from-file "
                 "bear_simulation/data/terrain_prefetch_raw/*.json"
             )
             print(f"[terrain_cache] {self.disabled_reason}")
@@ -152,10 +146,9 @@ class TerrainCache:
                 PRIMARY KEY (lat_key, lon_key, radius)
             )
         """)
-        # Gebiete, die per prefetch_terrain.py vollstaendig vorab berechnet
-        # wurden. Innerhalb eines solchen Gebiets bedeutet "kein Cache-Eintrag"
-        # NICHT "unbekannt", sondern "hier ist nachweislich nichts" -> es wird
-        # dann NIE eine Internet-Anfrage gestellt.
+        # Areas fully precomputed by tools/prefetch_terrain.py. Inside such
+        # an area a missing cache entry does NOT mean "unknown" but "no
+        # features present", so no internet request is ever issued there.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS prefetch_regions (
                 min_lat_key REAL NOT NULL,
@@ -169,7 +162,7 @@ class TerrainCache:
         conn.commit()
         conn.close()
         self._regions = self._load_regions()
-        self._mem: dict = {}  # In-Memory-Nachschlagetabelle, spart SQLite-Zugriffe
+        self._mem: dict = {}  # in-memory lookup table, saves SQLite round trips
 
     def _load_regions(self) -> list[tuple]:
         conn = sqlite3.connect(self.db_path)
@@ -191,7 +184,7 @@ class TerrainCache:
         return (round(lat / g) * g, round(lon / g) * g)
 
     def _throttle(self):
-        """Sorgt fuer mind. MIN_SECONDS_BETWEEN_REQUESTS Pause zwischen echten Anfragen."""
+        """Enforce at least MIN_SECONDS_BETWEEN_REQUESTS between real requests."""
         elapsed = time.time() - self._last_request_time
         wait = MIN_SECONDS_BETWEEN_REQUESTS - elapsed
         if wait > 0:
@@ -199,10 +192,10 @@ class TerrainCache:
         self._last_request_time = time.time()
 
     def _query_overpass_raw(self, lat: float, lon: float, radius: int) -> dict:
-        """Baut die Overpass-QL-Anfrage (wie OSM.py) und schickt sie mit
-        eigenem User-Agent + Drosselung ab - probiert dabei nacheinander
-        alle unabhaengigen Spiegelserver aus OVERPASS_URLS durch, statt
-        denselben (evtl. blockierten) Server mehrfach zu wiederholen."""
+        """Build the Overpass QL query, as OSM.py does, and send it with a
+        dedicated user agent and throttling. Mirrors from OVERPASS_URLS are
+        tried in turn rather than retrying the same, possibly blocked,
+        server repeatedly."""
         query = "[out:json];\n("
         for element_type, tags in DEFAULT_QUERY_ELEMENTS.items():
             for tag in tags:
@@ -221,7 +214,7 @@ class TerrainCache:
                 last_error = f"{url} -> {e}"
 
             if i < len(OVERPASS_URLS) - 1:
-                time.sleep(1)  # kurze Pause, dann direkt naechsten Spiegel probieren
+                time.sleep(1)  # brief pause, then try the next mirror
 
         raise RuntimeError(last_error)
 
@@ -229,20 +222,20 @@ class TerrainCache:
                          max_lat: float, max_lon: float,
                          radius: int = 150) -> list[tuple]:
         """
-        Liefert ALLE gecachten Rasterzellen in einem Rechteck auf einmal.
+        Return ALL cached grid cells inside a rectangle in one query.
 
-        Gegenstueck zu get_features(), das immer nur eine einzelne Zelle
-        liefert. Gebraucht fuer die cluster-basierte Richtungswahl
-        (japan_comparison.choose_weighted_direction), die das Gelaende im
-        Umkreis des Baeren als Flaeche betrachtet statt punktweise.
+        Counterpart to get_features(), which always returns a single cell.
+        Required by the cluster-based heading selection
+        (japan_comparison.choose_weighted_direction), which treats the
+        terrain around the bear as an area rather than point by point.
 
-        Fragt NIE bei Overpass nach: die Methode ist ausschliesslich fuer
-        vorab geladene Gebiete gedacht (prefetch_terrain.py). Eine fehlende
-        Zelle bedeutet dort "nachweislich keine Merkmale" und taucht in der
-        Rueckgabe schlicht nicht auf.
+        Never queries Overpass: this method is intended exclusively for
+        prefetched areas (tools/prefetch_terrain.py). A missing cell there
+        means "no features present" and simply does not appear in the
+        result.
 
         Returns:
-            Liste von (lat_key, lon_key, features_dict)
+            A list of (lat_key, lon_key, features_dict).
         """
         if getattr(self, "disabled", False):
             return []
@@ -254,7 +247,7 @@ class TerrainCache:
                 (radius, min_lat, max_lat, min_lon, max_lon),
             ).fetchall()
         except sqlite3.DatabaseError as e:
-            print(f"[terrain_cache] Rasterausschnitt nicht lesbar: {e}")
+            print(f"[terrain_cache] Grid section not readable: {e}")
             return []
         finally:
             conn.close()
@@ -269,15 +262,15 @@ class TerrainCache:
 
     def get_features(self, lat: float, lon: float, radius: int = 150) -> dict:
         """
-        Liefert Terrain-Features (0/1-Flags pro OSM-Tag/-Wert) fuer eine
-        Koordinate - aus dem Cache, falls vorhanden, sonst live von Overpass
-        abgefragt (und danach gecacht). Bei wiederholten Fehlern schaltet
-        sich die Terrain-Abfrage fuer den Rest des Laufs automatisch ab
-        (Circuit Breaker) statt endlos weiter zu scheitern.
+        Return terrain features (0/1 flags per OSM tag and value) for a
+        coordinate: from the cache if present, otherwise queried live from
+        Overpass and cached afterwards. After repeated failures the terrain
+        lookup disables itself for the rest of the run (circuit breaker)
+        instead of continuing to fail.
         """
-        # Cache unbrauchbar (siehe _init_db): keine Merkmale melden. Die
-        # Richtungswahl faellt damit automatisch auf den ungewichteten
-        # Zufall zurueck - genau das Verhalten ohne Gelaendegewichtung.
+        # Cache unusable (see _init_db): report no features. Heading
+        # selection then falls back to the unweighted random draw, which is
+        # exactly the behaviour without terrain weighting.
         if getattr(self, "disabled", False):
             return {}
 
@@ -298,9 +291,9 @@ class TerrainCache:
             self._mem[mem_key] = features
             return features
 
-        # Vorab heruntergeladenes Gebiet (prefetch_terrain.py): kein Eintrag
-        # heisst hier "nachweislich keine relevanten Gelaendemerkmale" ->
-        # sofort leeres Ergebnis, KEINE Internet-Anfrage.
+        # Prefetched area (tools/prefetch_terrain.py): a missing entry means
+        # "no relevant terrain features" here, so return an empty result
+        # immediately without any internet request.
         if self._in_prefetched_region(lat_key, lon_key, radius):
             conn.close()
             self._mem[mem_key] = {}
@@ -315,13 +308,13 @@ class TerrainCache:
             TerrainCache._consecutive_failures = 0
         except Exception as e:
             TerrainCache._consecutive_failures += 1
-            print(f"  [Warnung] Overpass-Abfrage fehlgeschlagen ({lat:.5f},{lon:.5f}): {e}")
+            print(f"  [warning] Overpass query failed ({lat:.5f},{lon:.5f}): {e}")
             if TerrainCache._consecutive_failures >= CONSECUTIVE_FAILURES_BEFORE_GIVING_UP:
                 TerrainCache._giving_up = True
-                print(f"  [Hinweis] {CONSECUTIVE_FAILURES_BEFORE_GIVING_UP} Fehler in Folge - "
-                      f"Terrain-Abfrage wird fuer den Rest der Sitzung deaktiviert, auch fuer "
-                      f"neu erzeugte TerrainCache-Instanzen (Simulation laeuft ohne "
-                      f"Gelaende-Gewichtung weiter).")
+                print(f"  [note] {CONSECUTIVE_FAILURES_BEFORE_GIVING_UP} consecutive failures; "
+                      f"terrain lookup is disabled for the rest of the session, including "
+                      f"newly created TerrainCache instances. The simulation continues "
+                      f"without terrain weighting.")
             conn.close()
             return {}
 
@@ -339,9 +332,10 @@ class TerrainCache:
     @staticmethod
     def _to_flags(raw: dict) -> dict:
         """
-        Wandelt die rohe Overpass-Antwort (Tag -> Werteliste) in einfache
-        0/1-Flags um - sowohl fuer den Tag-Namen selbst (z.B. 'highway')
-        als auch fuer jeden gefundenen Wert (z.B. 'motorway', 'forest').
+        Convert the raw Overpass response (tag to list of values) into
+        simple 0/1 flags, both for the tag name itself (for example
+        'highway') and for every value found (for example 'motorway',
+        'forest').
         """
         parsed = {tag: [] for element in DEFAULT_QUERY_ELEMENTS.values() for tag in element}
         for element in raw.get("elements", []):
@@ -367,14 +361,14 @@ class TerrainCache:
 
 if __name__ == "__main__":
     cache = TerrainCache()
-    print(f"Cache-Datenbank: {cache.db_path}")
-    print("Teste Abfrage (Fukushima-Region, Startkamera aus 2024Bear)...")
+    print(f"Cache database: {cache.db_path}")
+    print("Running a test query (Fukushima region, first camera of 2024Bear)...")
     features = cache.get_features(37.476533, 139.963517, radius=150)
-    print(f"Gefundene Features: {features}")
-    print(f"\nCache-Statistik: {cache.stats()}")
-    print("Zweite Abfrage derselben Stelle (sollte aus Cache kommen, keine Netzwerk-Pause):")
+    print(f"Features found: {features}")
+    print(f"\nCache statistics: {cache.stats()}")
+    print("Second query of the same location (should come from the cache, no network pause):")
     t0 = time.time()
     features2 = cache.get_features(37.476533, 139.963517, radius=150)
-    print(f"Dauer: {time.time()-t0:.3f}s (sollte nahe 0 sein)")
+    print(f"Duration: {time.time()-t0:.3f}s (expected to be close to zero)")
     assert features == features2
-    print("OK - identisches Ergebnis aus dem Cache.")
+    print("Identical result returned from the cache.")

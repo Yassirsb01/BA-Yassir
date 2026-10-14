@@ -1,38 +1,45 @@
 """
 prefetch_terrain.py
 =====================
-Laedt die Gelaendedaten (OpenStreetMap) fuer das GESAMTE Gebiet der
-japanischen Kameras EINMALIG herunter und rechnet sie lokal in das Raster
-um, das terrain_cache.py ohnehin verwendet. Danach laeuft die
-Gelaendegewichtung der Simulation komplett offline.
+Downloads the OpenStreetMap terrain data for the ENTIRE area of the
+Japanese cameras ONCE and converts it locally into the same grid that
+terrain_cache.py uses. Afterwards the terrain weighting of the simulation
+runs completely offline.
 
-Warum: Bisher wurde bei JEDEM Simulationsschritt, fuer JEDE der 8
-Kandidatenrichtungen, live bei der Overpass-API nachgefragt - bei mehreren
-Baeren und Stunden also tausende Einzelanfragen. Mit einem unzuverlaessigen
-Netz (OTH) fuehrte das zu minutenlangen Wartezeiten bzw. zum Abschalten der
-Gewichtung. Jetzt: wenige grosse Abfragen einmalig, danach nur noch
-lokales Nachschlagen in Millisekunden.
+Rationale: previously the Overpass API was queried live at EVERY
+simulation step for EVERY candidate heading, which amounts to thousands
+of individual requests across several bears and hours. On an unreliable
+network this led to waits of several minutes or to the weighting being
+switched off entirely. Now a few large queries are issued once, after
+which lookups are local and take milliseconds.
 
-Nebenbei eine inhaltliche Verbesserung: Overpass' around-Filter misst den
-Abstand zur UMRISSLINIE eines Gebiets. Mitten in einem grossen Waldstueck
-(weit weg vom Waldrand) wurde der Wald deshalb bisher nicht erkannt. Hier
-wird zusaetzlich geprueft, ob ein Rasterpunkt INNERHALB einer Flaeche liegt.
+This also improves the data itself. The Overpass "around" filter measures
+the distance to the OUTLINE of an area, so a point in the middle of a
+large forest, far from its edge, was not recognised as forest. Here it is
+additionally checked whether a grid point lies INSIDE an area.
 
-Aufruf (einmalig, dort wo Internet/Overpass funktioniert - z.B. zuhause
-oder per Handy-Hotspot):
+Usage (once, on a connection where Overpass is reachable):
 
-    python prefetch_terrain.py
+    python tools/prefetch_terrain.py
 
-Falls Python die Server nicht erreicht, aber der Browser schon:
+If Python cannot reach the servers but a browser can:
 
-    python prefetch_terrain.py --print-query      (Abfrage anzeigen)
-    -> auf https://overpass-turbo.eu einfuegen, "Ausfuehren",
-       dann "Export" -> "Rohdaten" (JSON) speichern, z.B. als gelaende.json
-    python prefetch_terrain.py --from-file gelaende.json
+    python tools/prefetch_terrain.py --print-query    (print the query)
+    -> paste it into https://overpass-turbo.eu, run it, then use
+       "Export" -> "raw data" to save the JSON, for example terrain.json
+    python tools/prefetch_terrain.py --from-file terrain.json
 
-Ergebnis landet in bear_simulation/data/terrain_cache.db - diese Datei
-einfach mit auf den Labor-PC kopieren (oder ins Git-Repository legen).
+The result is written to bear_simulation/data/terrain_cache.db, which can
+simply be copied to another machine.
 """
+
+import os
+import sys
+
+# Script lives in a subdirectory; the application modules are one level up.
+_APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _APP_DIR not in sys.path:
+    sys.path.insert(0, _APP_DIR)
 
 import argparse
 import json
@@ -52,8 +59,8 @@ from terrain_cache import (
 )
 
 DEFAULT_RADIUS_M = 150      # muss zu query_radius_m in japan_comparison.choose_weighted_direction passen
-DEFAULT_BUFFER_KM = 5.0     # Puffer um die Kameras (so weit koennen simulierte Baeren laufen)
-DEFAULT_TILE_DEG = 0.08     # Kachelgroesse fuer den Download (~9 km) - kleinere Abfragen = weniger Timeouts
+DEFAULT_BUFFER_KM = 5.0     # buffer around the cameras, covering how far simulated bears can travel
+DEFAULT_TILE_DEG = 0.08     # download tile size (~9 km); smaller queries mean fewer timeouts
 REQUEST_TIMEOUT_S = 240
 M_PER_DEG_LAT = 111_320.0
 
@@ -78,8 +85,9 @@ def camera_bbox(buffer_km: float) -> tuple[float, float, float, float]:
 
 
 def build_query(bbox, timeout_s: int = 180) -> str:
-    """Dieselben Tags wie terrain_cache.py (und Fabians OSM.py), aber per
-    Bounding-Box statt around-Radius um einen einzelnen Punkt."""
+    """The same tags as terrain_cache.py (and OSM.py of the movement
+    model), but queried by bounding box instead of an around-radius
+    around a single point."""
     s, w, n, e = bbox
     q = f"[out:json][timeout:{timeout_s}];\n("
     for element_type, tags in DEFAULT_QUERY_ELEMENTS.items():
@@ -90,13 +98,13 @@ def build_query(bbox, timeout_s: int = 180) -> str:
 
 
 # =========================================================
-# 2) Download (gekachelt, mit Wiederaufnahme)
+# 2) Download, tiled and resumable
 # =========================================================
 def download_tiles(bbox, tile_deg: float, raw_dir: str = RAW_DIR) -> tuple[list[str], list[str]]:
     """
-    Teilt das Gebiet in Kacheln und laedt jede einzeln. Bereits geladene
-    Kacheln werden uebersprungen - bricht der Download ab, einfach erneut
-    starten, es geht an der Stelle weiter.
+    Split the area into tiles and download each one separately. Tiles
+    that are already present are skipped, so an interrupted download can
+    simply be restarted and continues where it stopped.
     """
     os.makedirs(raw_dir, exist_ok=True)
     s, w, n, e = bbox
@@ -111,7 +119,7 @@ def download_tiles(bbox, tile_deg: float, raw_dir: str = RAW_DIR) -> tuple[list[
     for k, (i, j, tb) in enumerate(tiles, 1):
         path = os.path.join(raw_dir, f"tile_{i}_{j}.json")
         if os.path.exists(path):
-            print(f"  Kachel {k}/{len(tiles)}: bereits vorhanden, uebersprungen")
+            print(f"  Tile {k}/{len(tiles)}: already present, skipped")
             done.append(path)
             continue
 
@@ -135,12 +143,13 @@ def download_tiles(bbox, tile_deg: float, raw_dir: str = RAW_DIR) -> tuple[list[
             time.sleep(2)
         if not ok:
             failed.append(path)
-        time.sleep(2)  # Overpass nicht ueberlasten
+        time.sleep(2)  # do not overload Overpass
     return done, failed
 
 
 def load_elements(paths: list[str]) -> list[dict]:
-    """Liest alle Rohdateien und entfernt Duplikate (Elemente an Kachelgrenzen)."""
+    """Read all raw files and remove duplicates, that is, elements that
+    appear on tile boundaries."""
     seen, elements = set(), []
     for p in paths:
         with open(p, encoding="utf-8") as f:
@@ -174,7 +183,7 @@ def _min_dist_to_segments(px, py, ax, ay, bx, by) -> np.ndarray:
 
 
 def _points_in_polygon(px, py, vx, vy) -> np.ndarray:
-    """Strahlverfahren (ray casting): liegt der Punkt innerhalb der geschlossenen Flaeche?"""
+    """Ray casting: does the point lie inside the closed polygon?"""
     x1, y1, x2, y2 = vx[:-1], vy[:-1], vx[1:], vy[1:]
     denom = np.where(y2 == y1, 1e-12, y2 - y1)
     out = np.empty(len(px), dtype=bool)
@@ -192,12 +201,13 @@ SQLITE_HEADER = b"SQLite format 3\x00"
 
 def ensure_usable_db(db_path: str) -> None:
     """
-    Prueft VOR dem Herunterladen/Rastern, ob die Ziel-Datenbank benutzbar ist.
+    Check BEFORE downloading and rasterising whether the target database
+    is usable.
 
-    Grund: Ist die Datei beschaedigt, scheiterte der Lauf frueher erst ganz am
-    Ende beim Schreiben - nach mehreren Minuten Rasterung, die damit umsonst
-    war. Eine beschaedigte Datei wird hier nicht geloescht, sondern mit einem
-    Zeitstempel zur Seite gelegt; die neue Datenbank wird frisch angelegt.
+    Rationale: if the file is damaged, the run used to fail only at the
+    very end while writing, after several minutes of rasterisation that
+    were then wasted. A damaged file is not deleted here but moved aside
+    with a timestamp, and a fresh database is created.
     """
     if not os.path.exists(db_path) or os.path.getsize(db_path) == 0:
         return
@@ -214,24 +224,24 @@ def ensure_usable_db(db_path: str) -> None:
 
     backup = f"{db_path}.beschaedigt-{time.strftime('%Y%m%d-%H%M%S')}"
     os.rename(db_path, backup)
-    print(f"[Hinweis] Die vorhandene Datei {os.path.basename(db_path)} ist keine gueltige "
-          f"SQLite-Datenbank (beschaedigt).")
-    print(f"          Sie wurde umbenannt in: {os.path.basename(backup)}")
-    print(f"          Es wird eine neue Datenbank angelegt - die heruntergeladenen "
-          f"Kacheln bleiben erhalten, es wird nichts neu geladen.\n")
+    print(f"[note] The existing file {os.path.basename(db_path)} is not a valid "
+          f"SQLite database.")
+    print(f"       It was renamed to: {os.path.basename(backup)}")
+    print(f"       A new database will be created. The downloaded tiles are "
+          f"kept, nothing is fetched again.\n")
 
 
 def element_flags(el: dict) -> set:
     """
-    Merkmale eines OSM-Elements als Flag-Menge.
+    Features of an OSM element as a set of flags.
 
-    Speichert BEIDES: den reinen Wert ("residential") fuer Rueckwaerts-
-    kompatibilitaet mit aelteren Caches, UND den tag-genauen Schluessel
-    ("highway=residential" bzw. "landuse=residential"). Nur mit dem
-    tag-genauen Schluessel laesst sich eine Wohnstrasse von einem
-    Wohngebiet unterscheiden - ohne diese Trennung galten in der
-    laendlichen Kameraregion 51 % aller Rasterzellen faelschlich als
-    Siedlung, weil dort eine kleine Strasse verlaeuft.
+    Stores BOTH the plain value ("residential"), for backwards
+    compatibility with older caches, AND the tag-qualified key
+    ("highway=residential" or "landuse=residential"). Only the qualified
+    key distinguishes a residential street from a residential area.
+    Without that distinction, 51 % of all grid cells in this rural camera
+    region counted as settlement merely because a small road runs
+    through them.
     """
     tags = el.get("tags", {}) or {}
     flags = set()
@@ -247,10 +257,10 @@ def element_flags(el: dict) -> set:
 def rasterize(elements: list[dict], bbox, grid_size_deg: float = GRID_SIZE_DEG,
               radius_m: int = DEFAULT_RADIUS_M) -> tuple[dict, tuple[int, int, int, int]]:
     """
-    Fuer jeden Rasterpunkt (gleiches Raster wie TerrainCache._grid_key) werden
-    die Gelaendemerkmale im Umkreis radius_m bestimmt - im selben Format
-    (0/1-Flags) wie bei der bisherigen Live-Abfrage, damit die Bewertung in
-    japan_comparison.TERRAIN_PREFERENCE unveraendert bleibt.
+    For every grid point (the same grid as TerrainCache._grid_key), the
+    terrain features within radius_m are determined, in the same 0/1 flag
+    format as the live query, so that the scoring in
+    japan_comparison.TERRAIN_PREFERENCE stays unchanged.
     """
     g = grid_size_deg
     s, w, n, e = bbox
@@ -308,7 +318,7 @@ def rasterize(elements: list[dict], bbox, grid_size_deg: float = GRID_SIZE_DEG,
         if idx % 2000 == 0:
             print(f"  ... {idx}/{len(elements)} Elemente verarbeitet")
 
-    print(f"  {n_used} Gelaende-Elemente in {len(cell_flags)} Rasterzellen eingetragen")
+    print(f"  {n_used} terrain elements recorded in {len(cell_flags)} grid cells")
     return cell_flags, (i_min, i_max, j_min, j_max)
 
 
@@ -318,23 +328,22 @@ def rasterize(elements: list[dict], bbox, grid_size_deg: float = GRID_SIZE_DEG,
 def write_cache(cell_flags: dict, index_range, grid_size_deg: float, radius_m: int,
                 db_path: str = DEFAULT_CACHE_DB) -> None:
     """
-    Schreibt die Rasterzellen in die Cache-Datenbank - ATOMAR.
+    Write the grid cells into the cache database ATOMICALLY.
 
-    Warum atomar: Die Cache-Datei ist schon zweimal unbrauchbar geworden.
-    Geschrieben wird deshalb zuerst in eine Kopie neben der Zieldatei; erst
-    wenn diese Kopie ein "PRAGMA quick_check" besteht, ersetzt os.replace()
-    das Original in einem einzigen Schritt. Bricht der Vorgang vorher ab
-    (Absturz, Virenscanner, Strom weg), bleibt die alte, funktionierende
-    Datei unangetastet - man verliert hoechstens den neuen Lauf.
+    Rationale: the cache file has already become unusable twice. Writing
+    therefore goes into a copy next to the target file first; only once
+    that copy passes "PRAGMA quick_check" does os.replace() swap it in as
+    a single step. If the process is interrupted before that, by a crash
+    or a power loss, the old working file stays untouched and at most the
+    new run is lost.
 
-    Eine bereits defekte Zieldatei wird von ensure_usable_db() abgefangen,
-    das main() vor dem Rastern aufruft - hier muss sie nicht noch einmal
-    geprueft werden.
+    An already damaged target file is caught by ensure_usable_db(), which
+    main() calls before rasterising, so it is not checked again here.
     """
     tmp_path = f"{db_path}.tmp-{os.getpid()}"
     if os.path.exists(tmp_path):
         os.remove(tmp_path)
-    # Bestehende Eintraege uebernehmen, damit ein Teil-Lauf den Cache nicht leert
+    # Carry over existing entries so that a partial run does not empty the cache
     if os.path.exists(db_path):
         shutil.copy2(db_path, tmp_path)
 
@@ -346,7 +355,7 @@ def write_cache(cell_flags: dict, index_range, grid_size_deg: float, radius_m: i
         ok = check.execute("PRAGMA quick_check").fetchone()[0]
         check.close()
         if ok != "ok":
-            raise sqlite3.DatabaseError(f"Neu geschriebene Datei fehlerhaft: {ok}")
+            raise sqlite3.DatabaseError(f"Newly written file is faulty: {ok}")
 
         os.replace(tmp_path, db_path)   # atomar, auch unter Windows
     except Exception:
@@ -357,11 +366,11 @@ def write_cache(cell_flags: dict, index_range, grid_size_deg: float, radius_m: i
 
 def _write_cache_into(cell_flags: dict, index_range, grid_size_deg: float, radius_m: int,
                       db_path: str) -> None:
-    """Eigentliches Schreiben - immer in die temporaere Datei, siehe write_cache()."""
-    TerrainCache(db_path=db_path, grid_size_deg=grid_size_deg)  # legt Tabellen an, falls noetig
+    """The actual write, always into the temporary file; see write_cache()."""
+    TerrainCache(db_path=db_path, grid_size_deg=grid_size_deg)  # creates the tables if needed
     g = grid_size_deg
     now = time.time()
-    # Schluessel exakt wie TerrainCache._grid_key: round(x/g)*g == int*g
+    # Keys exactly as in TerrainCache._grid_key: round(x/g)*g == int*g
     rows = [
         (int(i) * g, int(j) * g, radius_m, json.dumps({k: 1 for k in sorted(flags)}), now)
         for (i, j), flags in cell_flags.items()
@@ -372,7 +381,7 @@ def _write_cache_into(cell_flags: dict, index_range, grid_size_deg: float, radiu
         "INSERT OR REPLACE INTO terrain_cache (lat_key, lon_key, radius, features_json, cached_at) "
         "VALUES (?, ?, ?, ?, ?)", rows,
     )
-    # Bei erneutem Lauf denselben Bereich nicht doppelt eintragen
+    # Do not record the same area twice on a repeated run
     conn.execute(
         "DELETE FROM prefetch_regions WHERE min_lat_key=? AND min_lon_key=? AND max_lat_key=? "
         "AND max_lon_key=? AND radius=?",
@@ -386,66 +395,67 @@ def _write_cache_into(cell_flags: dict, index_range, grid_size_deg: float, radiu
     conn.commit()
     conn.close()
     n_cells = (i_max - i_min + 1) * (j_max - j_min + 1)
-    print(f"  {len(rows)} Zellen mit Gelaendemerkmalen gespeichert "
-          f"(Gebiet insgesamt {n_cells} Zellen, Rest = nachweislich ohne Merkmale)")
+    print(f"  {len(rows)} cells with terrain features stored "
+          f"({n_cells} cells in the area in total; the rest demonstrably "
+          f"have no features)")
 
 
 # =========================================================
-# 5) Ablauf
+# 5) Entry point
 # =========================================================
 def main():
-    ap = argparse.ArgumentParser(description="Gelaendedaten fuer die Japan-Simulation einmalig vorab laden.")
+    ap = argparse.ArgumentParser(description="Pre-load terrain data for the Japan simulation once.")
     ap.add_argument("--buffer-km", type=float, default=DEFAULT_BUFFER_KM)
     ap.add_argument("--tile-deg", type=float, default=DEFAULT_TILE_DEG)
     ap.add_argument("--radius", type=int, default=DEFAULT_RADIUS_M)
-    ap.add_argument("--bbox", type=float, nargs=4, metavar=("SUED", "WEST", "NORD", "OST"),
-                    help="Gebiet manuell angeben statt aus den Kamerastandorten")
+    ap.add_argument("--bbox", type=float, nargs=4, metavar=("SOUTH", "WEST", "NORTH", "EAST"),
+                    help="Specify the area manually instead of deriving it from the cameras")
     ap.add_argument("--print-query", action="store_true",
-                    help="Nur die Abfrage fuer overpass-turbo.eu ausgeben")
+                    help="Only print the query for overpass-turbo.eu")
     ap.add_argument("--from-file", nargs="+",
-                    help="Vorher im Browser gespeicherte Overpass-JSON-Datei(en) verwenden")
+                    help="Use Overpass JSON file(s) saved earlier from a browser")
     ap.add_argument("--db", default=DEFAULT_CACHE_DB)
     args = ap.parse_args()
 
     bbox = tuple(args.bbox) if args.bbox else camera_bbox(args.buffer_km)
-    # etwas groesser laden als gerastert, damit Merkmale knapp ausserhalb
-    # des Randes fuer die Randzellen trotzdem beruecksichtigt werden
+    # Load slightly more than is rasterised, so that features just
+    # outside the boundary are still taken into account for edge cells
     pad = args.radius / M_PER_DEG_LAT * 1.5
     load_bbox = (bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad)
 
-    print(f"Gebiet: Sued {bbox[0]:.4f}, West {bbox[1]:.4f}, Nord {bbox[2]:.4f}, Ost {bbox[3]:.4f}")
+    print(f"Area: south {bbox[0]:.4f}, west {bbox[1]:.4f}, north {bbox[2]:.4f}, east {bbox[3]:.4f}")
 
-    ensure_usable_db(args.db)  # frueh pruefen, damit keine Rechenzeit verloren geht
+    ensure_usable_db(args.db)  # check early so that no computation time is wasted
 
     if args.print_query:
-        print("\nDiese Abfrage auf https://overpass-turbo.eu einfuegen, ausfuehren und "
-              "ueber 'Export' -> 'Rohdaten' als JSON speichern:\n")
+        print("\nPaste this query into https://overpass-turbo.eu, run it and save "
+              "the result as JSON through 'Export' -> 'raw data':\n")
         print(build_query(load_bbox, timeout_s=300))
         return
 
     t0 = time.time()
     if args.from_file:
         paths = args.from_file
-        print(f"\n[1/3] Verwende {len(paths)} lokale Datei(en)")
+        print(f"\n[1/3] Using {len(paths)} local file(s)")
     else:
-        print(f"\n[1/3] Lade Gelaendedaten (Kacheln a {args.tile_deg} Grad) ...")
+        print(f"\n[1/3] Downloading terrain data (tiles of {args.tile_deg} degrees) ...")
         paths, failed = download_tiles(load_bbox, args.tile_deg)
         if failed:
-            print(f"\n{len(failed)} Kachel(n) konnten nicht geladen werden. Einfach erneut starten "
-                  f"(bereits geladene werden uebersprungen) oder den Browser-Weg nutzen "
-                  f"(--print-query / --from-file). Es wird NICHTS gespeichert, damit keine "
-                  f"Luecken als 'kein Gelaende' fehlinterpretiert werden.")
+            print(f"\n{len(failed)} tile(s) could not be downloaded. Simply start again "
+                  f"(already downloaded tiles are skipped) or use the browser route "
+                  f"(--print-query / --from-file). NOTHING is stored, so that gaps "
+                  f"cannot be misread as 'no terrain here'.")
             sys.exit(1)
 
     elements = load_elements(paths)
-    print(f"\n[2/3] Rastere {len(elements)} Elemente (Rasterweite ~150 m, Radius {args.radius} m) ...")
+    print(f"\n[2/3] Rasterising {len(elements)} elements (grid ~150 m, radius {args.radius} m) ...")
     cell_flags, idx_range = rasterize(elements, bbox, radius_m=args.radius)
 
-    print(f"\n[3/3] Schreibe in {args.db} ...")
+    print(f"\n[3/3] Writing to {args.db} ...")
     write_cache(cell_flags, idx_range, GRID_SIZE_DEG, args.radius, db_path=args.db)
 
-    print(f"\nFertig in {time.time() - t0:.0f} s. Die Simulation nutzt ab jetzt fuer dieses "
-          f"Gebiet ausschliesslich lokale Daten - keine Internet-Anfragen mehr.")
+    print(f"\nFinished in {time.time() - t0:.0f} s. For this area the simulation now "
+          f"uses local data exclusively; no further internet requests are made.")
 
 
 if __name__ == "__main__":

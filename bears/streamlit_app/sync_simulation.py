@@ -1,45 +1,36 @@
 """
 sync_simulation.py
 ====================
-Erzeugt echte + simulierte Bärenbewegung GARANTIERT synchron für denselben
-Bären, denselben Tag - im Gegensatz zum vorherigen Ansatz (getrennte
-Bär-/Zeitraum-Auswahl für Carpathian vs. Simulation), der zwei potenziell
-völlig unzusammenhängende Datensätze nebeneinander gezeigt hat.
+Produces real and simulated bear movement that is guaranteed to be
+synchronous: same bear, same day, same timestamps. An earlier approach let
+the user pick bear and period separately for the real track and for the
+simulation, which could place two entirely unrelated datasets side by side.
 
-Wie: Nutzt Fabians StepSelectionModel DIREKT (nicht den bisherigen,
-undurchsichtigen bear_simulation-Wrapper) und füttert es mit genau den
-echten GPS-Punkten, die auch für den gewählten Tag in der Karte angezeigt
-werden. Jede Alternative wird mit dem Zeitstempel ihres zugehörigen echten
-Schritts verknüpft - Animation von echt und simuliert läuft dadurch immer
-exakt im selben Zeitfenster, Schritt für Schritt.
+The step generation builds on the movement model of Fabian Breu
+(bear_simulation/model/StepSelectionModel.py). Its logic is reimplemented
+here rather than imported; the reasons are documented in ANPASSUNGEN.md.
+Every alternative step is tied to the timestamp of the real step it belongs
+to, so the animation of real and simulated movement always advances through
+the same time window, step by step.
 
-Laut Prof. Dünnweber (Meeting 21.08.2026) ausdrücklich erlaubt: Fabians
-Code darf angepasst werden, muss nicht 1:1 übernommen werden - Ziel ist
-die Umsetzung seiner Anforderungen (echte + simulierte Bewegung
-nebeneinander zur "Realitätsprüfung der KI-Simulation").
+The simulation is exposed in two forms, usable at the same time:
 
-Zwei Ausgabeformen der Simulation (beide gleichzeitig nutzbar):
+  1. FAN ("alternative"): at every real step, all N candidate moves the
+     model generated there. Shows the space of possibilities for a SINGLE
+     step, but does not form a path.
 
-  1. FÄCHER ("alternative"): an jedem echten Schritt alle N Kandidaten,
-     die das Modell dort erzeugt hat. Zeigt den Möglichkeitsraum EINES
-     Schritts, ergibt aber keinen Pfad.
+  2. REALISATIONS ("simulated"): continuous paths obtained by drawing one
+     candidate per step and applying it to the current simulated position.
+     This is what provides a second bear that can move alongside the real
+     one. Each realisation is ONE possible model run, NOT a prediction; see
+     _build_simulated_realizations() for the rationale.
 
-  2. REALISIERUNGEN ("simulated", neu): durchgehende Pfade, die entstehen,
-     wenn man Schritt für Schritt einen Kandidaten zieht und ihn auf die
-     jeweils aktuelle simulierte Position anwendet. Erst damit gibt es
-     einen zweiten Bären, der neben dem echten mitlaufen kann - die
-     eigentliche Protokoll-Anforderung ("Bewegungen echter UND simulierter
-     Bären"). Jede Realisierung ist EIN möglicher Modelllauf, KEINE
-     Vorhersage; Details und Begründung in _build_simulated_realizations().
-
-Abweichungen von Fabians Originalcode sind in ANPASSUNGEN.md gesammelt.
-
-Wichtiger Hinweis zur Saison: Carpathian nutzt biologische Saisonlabel
-("Forest fruits", "Hyperphagia", ...), Fabians Geschwindigkeitstabelle
-(bear_speeds) braucht Kalender-Saisons ("spring"/"summer"/"autumn"/
-"winter"). Die Saison wird deshalb NICHT aus den Carpathian-Properties
-übernommen, sondern direkt aus dem Datum abgeleitet - mit Fabians eigener
-BearSeasons-Klasse (gleicher Code, den auch StepTrajectorySet nutzt).
+Season handling: the Carpathian dataset uses biological annual phases
+("Forest fruits", "Hyperphagia", ...), whereas the speed table bear_speeds
+expects calendar seasons ("spring"/"summer"/"autumn"/"winter"). The season
+is therefore not taken from the Carpathian properties but derived from the
+date using the BearSeasons class, which is the same code path used by
+StepTrajectorySet.
 """
 
 import math
@@ -65,87 +56,82 @@ from geopy.distance import geodesic                # noqa: E402
 SIM_SOURCE = "Carpathians"
 _SIM_DB_PATH = os.path.join(_SIM_DIR, "data", "database.db")
 
-# --- Parameter der simulierten Trajektorie (siehe Modul-Docstring, Punkt 2) ---
+# --- Parameters of the simulated trajectory ------------------------------
 
-# Empirisch gemessene Richtungstreue der ECHTEN Carpathian-Baeren.
+# Directional persistence measured on the REAL Carpathian bears.
 #
-# Gemessen an 1_bears_RO.csv (13 Baeren, 59997 Punkte) ueber alle Paare
-# aufeinanderfolgender 1-Stunden-Schritte (n = 46161): der Drehwinkel
-# zwischen zwei Schritten, aufgeschluesselt nach Schrittlaenge. Angegeben
-# ist der Mittelwert von cos(Drehwinkel) - 0 bedeutet richtungslos,
-# +1 schnurgerade, negative Werte ein Hin-und-Her.
+# Measured on 1_bears_RO.csv (13 individuals, 59,997 fixes) over all pairs
+# of consecutive one-hour steps (n = 46,161): the turning angle between two
+# steps, grouped by step length. The value given is the mean of
+# cos(turning angle); 0 means directionless, +1 perfectly straight,
+# negative values indicate back-and-forth movement.
 #
-#   Schrittlaenge      n      mittleres cos    Median-Drehwinkel
-#      < 25 m       24058        -0.202            114 Grad
-#     25 -  50 m     5876        -0.122            106 Grad
-#     50 - 100 m     4545        +0.106             75 Grad
-#    100 - 200 m     4529        +0.251             62 Grad
-#    200 - 500 m     4634        +0.414             47 Grad
-#      > 500 m       2519        +0.588             36 Grad
+#   step length        n      mean cos      median turning angle
+#      < 25 m       24,058     -0.202              114 deg
+#     25 -  50 m     5,876     -0.122              106 deg
+#     50 - 100 m     4,545     +0.106               75 deg
+#    100 - 200 m     4,529     +0.251               62 deg
+#    200 - 500 m     4,634     +0.414               47 deg
+#      > 500 m       2,519     +0.588               36 deg
 #
-# WARUM DAS WICHTIG IST: Ueber alle Schritte gemittelt ergibt sich
-# cos = -0.012, also scheinbar voellig richtungsloses Umherlaufen. Das ist
-# aber eine Mischung aus zwei GEGENSAETZLICHEN Zustaenden - der Baer frisst
-# bzw. ruht kleinraeumig (kurze Schritte, ausgepraegtes Hin-und-Her) oder
-# er wandert zielgerichtet (lange Schritte, deutlich geradeaus). Ein
-# einzelner, fester Traegheitsparameter kann beides nicht abbilden: zu
-# klein gewaehlt zittert der simulierte Baer auch beim Wandern auf der
-# Stelle, zu gross gewaehlt marschiert er auch beim Fressen schnurgerade
-# davon. Die Kandidatenauswahl wird deshalb pro Schritt anhand der fuer
-# diesen Schritt erwarteten Laenge gewichtet.
+# Rationale: averaged over all steps the mean cosine is -0.012, suggesting
+# completely directionless wandering. That average mixes two OPPOSING
+# states, however. A bear foraging or resting moves over short distances
+# with pronounced back-and-forth, while a travelling bear covers long
+# distances in an almost straight line. A single fixed persistence
+# parameter cannot represent both: too small and the simulated bear jitters
+# in place even while travelling, too large and it marches in a straight
+# line even while foraging. Candidate selection is therefore weighted per
+# step, using the step length expected for that step.
 #
-# Hinweis fuer die Bewertung: Bei sehr kurzen Schritten (Median aller
-# Schritte 22,7 m) liegt die GPS-Ungenauigkeit in derselben
-# Groessenordnung wie der Schritt selbst. Ein Teil des gemessenen
-# Hin-und-Her duerfte daher Messrauschen und nicht Verhalten sein - die
-# negativen Werte sind also eher eine Obergrenze der Tortuositaet.
+# Caveat: the median of all steps is 22.7 m, which is the same order of
+# magnitude as the GPS error. Part of the measured back-and-forth at short
+# step lengths is therefore likely measurement noise rather than behaviour,
+# so the negative values should be read as an upper bound on tortuosity.
 EMPIRICAL_TURN_PERSISTENCE = [
     (15.0, -0.202), (35.0, -0.122), (70.0, 0.106),
     (140.0, 0.251), (320.0, 0.414), (800.0, 0.588),
 ]
 
-# Fester Traegheitswert fuer persistence_mode="fixed" - derselbe Wert wie
-# DEFAULT_PERSISTENCE_WEIGHT in japan_comparison.py. Dort ist er noetig,
-# weil ohne echte Route gar kein Bezugspunkt existiert; hier dient er nur
-# noch dem Vergleich (siehe ANPASSUNGEN.md).
+# Fixed persistence value for persistence_mode="fixed", identical to
+# DEFAULT_PERSISTENCE_WEIGHT in japan_comparison.py. It is required there
+# because no real route exists as a reference; here it only serves as a
+# comparison baseline (see ANPASSUNGEN.md).
 DEFAULT_PERSISTENCE_WEIGHT = 2.5
 
-# Wie viele unabhaengige Realisierungen standardmaessig erzeugt werden.
-# Bewusst > 1: eine einzelne Linie wuerde wie eine Vorhersage aussehen,
-# mehrere auseinanderlaufende Linien zeigen sofort, dass es sich um
-# Zufallsziehungen aus demselben Modell handelt.
+# Number of independent realisations generated by default. Deliberately
+# greater than one: a single line would read as a prediction, whereas
+# several diverging lines make the random nature of the model immediately
+# visible.
 DEFAULT_REALIZATIONS = 3
 
 
 def _generate_alternative_steps(segment, bear_speeds, num_alternatives=10, perception_distance=200,
                                 rng=None, scale_to_interval=True):
     """
-    Direkte Neuimplementierung von StepSelectionModel.generate_alternative_steps()
-    (identische Logik, siehe model/StepSelectionModel.py) - bewusst OHNE den Import
-    von StepSelectionModel selbst, weil dessen __init__ ueber StepTrajectorySet ->
-    SeasonalTrajectoryProcessor -> ClusterCalculator -> Hdbscan eine schwere,
-    fuer diesen Anwendungsfall unnoetige Cluster-Analyse-Kette mitzieht (und das
-    'hdbscan'-Paket braucht, das hier evtl. nicht installiert ist - vermutlich der
-    Grund, warum die Simulation bisher im Fallback-Modus lief). Fuer die eigentliche
-    Schritt-Generierung wird nur BearSpeeds + GeoToolBox gebraucht, siehe unten.
+    Reimplementation of StepSelectionModel.generate_alternative_steps()
+    (identical logic, see model/StepSelectionModel.py), deliberately without
+    importing StepSelectionModel itself: its constructor pulls in
+    StepTrajectorySet -> SeasonalTrajectoryProcessor -> ClusterCalculator ->
+    Hdbscan, a heavy cluster analysis chain that this use case does not
+    need and that requires the hdbscan package. Step generation only needs
+    BearSpeeds and GeoToolBox.
 
-    Zwei Abweichungen vom Original (beide bewusst, siehe ANPASSUNGEN.md):
+    Two deliberate deviations from the original (see ANPASSUNGEN.md):
 
-    rng: eigener Zufallsgenerator statt des globalen random-Moduls. Nur so
-        ist ein Lauf reproduzierbar - noetig, damit ein Screenshot in der
-        Bachelorarbeit spaeter exakt wiederherstellbar ist.
+    rng: a dedicated random generator instead of the global random module.
+        Only this makes a run reproducible, which is required for figures
+        that have to be regenerated identically.
 
-    scale_to_interval: Die Schrittlaenge des Originals ist
-        median_speed_kmh * 1000, also die Strecke einer STUNDE. Die
-        Carpathian-GPS-Fixes liegen aber nur zu rund 80 % eine Stunde
-        auseinander, zu 13 % zwei Stunden und zu 7 % noch weiter (gemessen
-        an 1_bears_RO.csv, 59997 Punkte). Bei einer Zweistundenluecke waren
-        die Alternativen damit nur halb so lang wie der echte Schritt - der
-        Faecher war dort systematisch zu klein und eine daraus gebaute
-        Trajektorie blieb zwangslaeufig hinter dem echten Baeren zurueck.
-        Mit scale_to_interval=True wird die Laenge mit der tatsaechlich
-        verstrichenen Zeit skaliert. scale_to_interval=False stellt das
-        urspruengliche Verhalten wieder her.
+    scale_to_interval: the original step length is median_speed_kmh * 1000,
+        that is, the distance covered in ONE HOUR. The Carpathian GPS fixes
+        are only about 80 % one hour apart, 13 % roughly two hours and 7 %
+        longer (measured on 1_bears_RO.csv, 59,997 fixes). For a two-hour
+        gap the alternatives were therefore only half as long as the real
+        step: the fan was systematically too small there and any trajectory
+        built from it inevitably fell behind the real bear. With
+        scale_to_interval=True the length is scaled by the time actually
+        elapsed; scale_to_interval=False restores the original behaviour.
     """
     rng = rng or random
     alternatives_per_step = []
@@ -162,7 +148,7 @@ def _generate_alternative_steps(segment, bear_speeds, num_alternatives=10, perce
             alternatives_per_step.append([])
             continue
 
-        # Dauer DIESES Schritts in Stunden (siehe scale_to_interval oben)
+        # Duration of THIS step in hours (see scale_to_interval above)
         dt_hours = (end.time - start.time).total_seconds() / 3600.0
         factor = dt_hours if (scale_to_interval and dt_hours > 0) else 1.0
 
@@ -196,19 +182,19 @@ def _generate_alternative_steps(segment, bear_speeds, num_alternatives=10, perce
 
 
 def _angular_diff_deg(a: float, b: float) -> float:
-    """Kleinster Winkel zwischen zwei Richtungen (0-180 Grad)."""
+    """Smallest angle between two headings, in degrees (0-180)."""
     d = abs(a - b) % 360
     return d if d <= 180 else 360 - d
 
 
 def _mean_cos_for_step_length(step_length_m: float) -> float:
     """
-    Erwartete Richtungstreue (mittleres cos des Drehwinkels) fuer einen
-    Schritt dieser Laenge - lineare Interpolation zwischen den gemessenen
-    Stuetzstellen in EMPIRICAL_TURN_PERSISTENCE, auf logarithmischer
-    Laengenachse (die Stuetzstellen sind ungefaehr logarithmisch verteilt).
-    Ausserhalb des gemessenen Bereichs wird der Randwert gehalten, statt zu
-    extrapolieren.
+    Expected directional persistence (mean cosine of the turning angle) for
+    a step of this length. Linear interpolation between the measured
+    reference points in EMPIRICAL_TURN_PERSISTENCE on a logarithmic length
+    axis, since those reference points are roughly logarithmically spaced.
+    Outside the measured range the boundary value is held rather than
+    extrapolated.
     """
     pts = EMPIRICAL_TURN_PERSISTENCE
     if step_length_m <= pts[0][0]:
@@ -225,20 +211,20 @@ def _mean_cos_for_step_length(step_length_m: float) -> float:
 
 def _kappa_from_mean_cos(rho: float) -> float:
     """
-    Rechnet eine gewuenschte mittlere Richtungstreue rho in die
-    Konzentration kappa einer von-Mises-Verteilung um.
+    Convert a desired mean directional persistence rho into the
+    concentration kappa of a von Mises distribution.
 
-    Hintergrund: Werden gleichverteilte Kandidatenrichtungen mit
-    exp(kappa * cos(Drehwinkel)) gewichtet, ist das genau eine diskrete
-    Naeherung der von-Mises-Verteilung - dem Standardmodell fuer
-    Drehwinkel in der Bewegungsoekologie. Deren mittlere resultierende
-    Laenge ist A(kappa) = I1(kappa)/I0(kappa); gesucht ist also die
-    Umkehrung A^-1(rho). Verwendet wird die gaengige Naeherung nach
-    Fisher (1993, "Statistical Analysis of Circular Data", Abschn. 4.5.5).
+    Background: weighting uniformly distributed candidate headings by
+    exp(kappa * cos(turning angle)) is a discrete approximation of the von
+    Mises distribution, the standard model for turning angles in movement
+    ecology. Its mean resultant length is A(kappa) = I1(kappa)/I0(kappa),
+    so what is needed is the inverse A^-1(rho). The common approximation
+    from Fisher (1993), "Statistical Analysis of Circular Data",
+    section 4.5.5, is used.
 
-    Negative rho (kurze Schritte, Hin-und-Her) ergeben negative kappa -
-    dann liegt das Gewichtsmaximum bei 180 Grad, also bei der Kehrtwende.
-    Das ist genau das gemessene Verhalten und kein Sonderfall.
+    Negative rho (short steps, back-and-forth) yields negative kappa, which
+    places the weight maximum at 180 degrees, that is, at a reversal. This
+    is the measured behaviour and not a special case.
     """
     s = 1.0 if rho >= 0 else -1.0
     r = min(abs(rho), 0.99)
@@ -260,56 +246,53 @@ def _build_simulated_realizations(
     persistence_weight: float = DEFAULT_PERSISTENCE_WEIGHT,
 ) -> list[list[dict]]:
     """
-    Baut aus den Schritt-Kandidaten zusammenhaengende simulierte Pfade.
+    Build continuous simulated paths from the per-step candidates.
 
-    WAS DAS IST - und was es NICHT ist:
-    Jeder erzeugte Pfad ist EINE moegliche Realisierung des Bewegungsmodells,
-    KEINE Vorhersage und keine Rekonstruktion dessen, was der Baer "eigentlich"
-    getan hat. Bei erneutem Ziehen kommt ein anderer Pfad heraus. Genau
-    deshalb werden standardmaessig MEHRERE Realisierungen erzeugt: eine
-    einzelne Linie neben der echten Route wuerde unweigerlich als "das
-    Modell sagt diesen Weg voraus" gelesen, mehrere auseinanderlaufende
-    Linien zeigen den Zufallscharakter unmittelbar.
+    What this is, and what it is not: each generated path is ONE possible
+    realisation of the movement model, not a prediction and not a
+    reconstruction of what the bear actually did. Drawing again yields a
+    different path. This is precisely why several realisations are produced
+    by default: a single line next to the real route would inevitably be
+    read as "the model predicts this route", whereas several diverging
+    lines convey the random nature directly.
 
-    Vorgehen pro Realisierung: Der simulierte Baer startet auf dem echten
-    Startpunkt. Fuer jeden echten Schritt wird aus den Kandidaten DIESES
-    Schritts einer gezogen; dessen Richtung und Laenge werden auf die
-    AKTUELLE simulierte Position angewandt (nicht auf die echte - sonst
-    entstuende kein durchgehender Pfad, sondern wieder nur ein Faecher).
-    Die Zeitstempel werden unveraendert von der echten Route uebernommen,
-    dadurch laufen beide Animationen zwangslaeufig synchron.
+    Procedure per realisation: the simulated bear starts at the real
+    starting point. For every real step one candidate of THAT step is
+    drawn, and its heading and length are applied to the CURRENT simulated
+    position, not to the real one; otherwise no continuous path would
+    emerge, only another fan. Timestamps are taken unchanged from the real
+    route, which forces both animations to run in step.
 
-    Warum die Ziehung GEWICHTET erfolgt: Die Kandidatenrichtungen sind
-    gleichverteilt (siehe _generate_alternative_steps: angle_offset ist
-    uniform ueber 0-360 Grad). Eine ebenfalls gleichverteilte Ziehung
-    ergaebe einen Pfad ohne jede Beziehung zum Drehverhalten echter
-    Baeren. Stattdessen werden die Kandidaten mit exp(kappa * cos(Drehwinkel))
-    gewichtet - eine diskrete von-Mises-Verteilung der Drehwinkel, dem
-    Standardmodell der Bewegungsoekologie.
+    Why the draw is WEIGHTED: the candidate headings are uniformly
+    distributed (see _generate_alternative_steps, where angle_offset is
+    uniform over 0-360 degrees). Drawing from them uniformly as well would
+    produce a path with no relation to the turning behaviour of real bears.
+    Instead the candidates are weighted by exp(kappa * cos(turning angle)),
+    a discrete von Mises distribution of turning angles, which is the
+    standard model in movement ecology.
 
-    persistence_mode steuert, woher kappa kommt:
+    persistence_mode selects the source of kappa:
 
-      "empirical" (Standard): kappa wird pro Schritt aus der gemessenen
-          Richtungstreue ECHTER Carpathian-Baeren bei DIESER Schrittlaenge
-          abgeleitet (EMPIRICAL_TURN_PERSISTENCE + _kappa_from_mean_cos).
-          Kurze Schritte werden dadurch tortuos wie beim Fressen, lange
-          Schritte gerichtet wie beim Wandern. Kein frei gewaehlter
-          Parameter - der Wert steht in den Daten.
+      "empirical" (default): kappa is derived per step from the measured
+          directional persistence of REAL Carpathian bears at THIS step
+          length (EMPIRICAL_TURN_PERSISTENCE plus _kappa_from_mean_cos).
+          Short steps become tortuous as during foraging, long steps
+          directed as during travel. No freely chosen parameter is
+          involved; the value comes from the data.
 
-      "fixed": ein einziger Traegheitswert fuer alle Schritte
-          (persistence_weight), wie im Japan-Teil. Nur fuer den Vergleich
-          gedacht; ueberzeichnet kurze Schritte deutlich.
+      "fixed": a single persistence value for all steps
+          (persistence_weight), as used in the Japan part. Intended for
+          comparison only; it markedly overstates short steps.
 
-      "off": gleichverteilte Ziehung, also unkorrelierter Random Walk.
-          Entspricht dem urspruenglichen Verhalten ohne jede Gewichtung.
+      "off": uniform draw, that is, an uncorrelated random walk. Matches
+          the original behaviour without any weighting.
 
-    Der echte Schritt bleibt bewusst Teil der Kandidatenmenge: In einer
-    Step-Selection-Funktion ist er der "genutzte" unter den "verfuegbaren"
-    Schritten. Ihn auszuschliessen wuerde die Simulation kuenstlich von der
-    Realitaet wegdruecken.
+    The real step deliberately remains part of the candidate set: in a step
+    selection function it is the "used" step among the "available" ones.
+    Excluding it would artificially push the simulation away from reality.
 
     Returns:
-        Liste von Realisierungen; jede ist eine Liste von
+        A list of realisations; each is a list of
         {"time": datetime, "lat": float, "lng": float, "step_index": int}.
     """
     rng = rng or random
@@ -328,9 +311,9 @@ def _build_simulated_realizations(
             next_time = traj_points[step_idx + 1].time
 
             if not candidates:
-                # Keine Geschwindigkeitsdaten fuer diese Stunde: Position
-                # halten statt zu raten. Der Punkt wird trotzdem gesetzt,
-                # damit die Zeitachse luckenlos zur echten Route passt.
+                # No speed data for this hour: hold the position rather
+                # than guess. The point is still emitted so that the time
+                # axis stays aligned with the real route.
                 path.append({
                     "time": next_time, "lat": current[0], "lng": current[1],
                     "step_index": step_idx + 1,
@@ -338,13 +321,13 @@ def _build_simulated_realizations(
                 continue
 
             if prev_direction is None or persistence_mode == "off":
-                # Erster Schritt: es gibt noch keine vorherige Richtung,
-                # auf die sich eine Drehung beziehen koennte.
+                # First step: there is no previous heading a turn could
+                # be measured against.
                 weights = [1.0] * len(candidates)
             else:
                 if persistence_mode == "empirical":
-                    # Erwartete Schrittlaenge dieses Schritts (die Kandidaten
-                    # eines Schritts haben bis auf den echten dieselbe Laenge).
+                    # Expected length of this step. All candidates of a
+                    # step share the same length except the real one.
                     lengths = [c["length"] for c in candidates if not c.get("real")]
                     step_len = lengths[0] if lengths else candidates[0]["length"]
                     kappa = _kappa_from_mean_cos(_mean_cos_for_step_length(step_len))
@@ -357,8 +340,8 @@ def _build_simulated_realizations(
                     ))
                     for c in candidates
                 ]
-                # Abzug des Maximums nur zur Zahlenstabilitaet - aendert die
-                # relativen Wahrscheinlichkeiten nicht.
+                # Subtracting the maximum is for numerical stability only
+                # and does not change the relative probabilities.
                 max_score = max(scores)
                 weights = [math.exp(s - max_score) for s in scores]
 
@@ -377,14 +360,14 @@ def _build_simulated_realizations(
 
 
 def _normalize_gender(raw) -> str:
-    """Carpathian-Rohwerte (z.B. 'male'/'Female'/'M') -> 'M'/'F', wie es
-    bear_speeds in der DB erwartet."""
+    """Map raw Carpathian values ('male'/'Female'/'M') to 'M'/'F', the
+    encoding the bear_speeds table uses."""
     s = str(raw).strip().lower()
     return "M" if s.startswith("m") else "F"
 
 
 def _normalize_age(raw) -> str:
-    """Carpathian-Rohwerte -> 'J' (juvenil/subadult) oder 'A' (adult)."""
+    """Map raw Carpathian values to 'J' (juvenile/subadult) or 'A' (adult)."""
     s = str(raw).strip().lower()
     if "sub" in s or "juv" in s or s in ("j", "young", "yearling"):
         return "J"
@@ -402,47 +385,48 @@ def build_synced_geojson(
 ) -> dict:
     """
     Args:
-        carpathian_points_geojson: das GeoJSON "points"-Objekt, das
-            get_carpathian_geojson() für EINEN Bären an EINEM Tag liefert
+        carpathian_points_geojson: the GeoJSON "points" object that
+            get_carpathian_geojson() returns for ONE bear on ONE day
             (properties: bear_id, timestamp, sex, age, ...).
-        num_alternatives: wie viele Alternativ-Kandidaten pro echtem Schritt.
-        perception_distance: siehe StepSelectionModel (Wahrnehmungsradius in m).
-        n_realizations: wie viele durchgehende simulierte Pfade erzeugt
-            werden (siehe _build_simulated_realizations). 0 schaltet sie ab.
-        seed: fester Zufalls-Seed fuer reproduzierbare Laeufe. None = wie
-            bisher zufaellig bei jedem Aufruf.
-        scale_to_interval: Schrittlaenge an die tatsaechliche Dauer des
-            GPS-Schritts anpassen (siehe _generate_alternative_steps).
-        persistence_mode: "empirical" | "fixed" | "off" - wie die
-            Drehwinkel der simulierten Pfade gewichtet werden, siehe
+        num_alternatives: number of candidate steps per real step.
+        perception_distance: perception radius in metres, see
+            StepSelectionModel.
+        n_realizations: how many continuous simulated paths to generate
+            (see _build_simulated_realizations). 0 disables them.
+        seed: fixed random seed for reproducible runs. None keeps the
+            previous behaviour of a different result on every call.
+        scale_to_interval: scale the step length to the actual duration of
+            the GPS step (see _generate_alternative_steps).
+        persistence_mode: "empirical" | "fixed" | "off", controlling how
+            turning angles of the simulated paths are weighted; see
             _build_simulated_realizations().
 
     Returns:
         {
-          "real": GeoJSON FeatureCollection (== die echten Punkte, nur
-                  nochmal durch Fabians Modell bestaetigt/durchgereicht),
-          "alternative": GeoJSON FeatureCollection, jede Alternative mit
-                  properties.timestamp EXAKT auf den Start-Zeitpunkt ihres
-                  zugehoerigen echten Schritts gesetzt (kein synthetischer,
-                  unabhaengiger Zeitstrahl mehr noetig),
-          "simulated": GeoJSON FeatureCollection der durchgehenden
-                  simulierten Pfade - Punkte mit properties.realization
-                  (0..n-1) und properties.timestamp, identisch zu den
-                  Zeitstempeln der echten Route. Jede Realisierung ist EIN
-                  moeglicher Modelllauf, keine Vorhersage.
-          "warnings": Liste evtl. Auffaelligkeiten (z.B. zu wenige Punkte,
-                  fehlende Geschwindigkeitsdaten fuer bestimmte Stunden).
+          "real": GeoJSON FeatureCollection, the real steps as passed
+                  through the model,
+          "alternative": GeoJSON FeatureCollection in which every
+                  alternative carries properties.timestamp set to the start
+                  time of the real step it belongs to, so no separate
+                  synthetic time axis is needed,
+          "simulated": GeoJSON FeatureCollection of the continuous
+                  simulated paths. Points carry properties.realization
+                  (0..n-1) and properties.timestamp identical to the
+                  timestamps of the real route. Each realisation is ONE
+                  possible model run, not a prediction.
+          "warnings": list of anomalies, for example too few points or
+                  missing speed data for certain hours.
         }
 
-    Bei < 2 echten Punkten (kein Schritt moeglich) werden leere
-    FeatureCollections zurueckgegeben statt eines Fehlers.
+    With fewer than two real points no step can be formed, in which case
+    empty FeatureCollections are returned rather than raising.
     """
     features = carpathian_points_geojson.get("features", [])
     warnings = []
 
     if len(features) < 2:
-        warnings.append(f"Nur {len(features)} echte(r) Punkt(e) an diesem Tag - "
-                         f"mindestens 2 fuer einen Schritt noetig.")
+        warnings.append(f"Only {len(features)} real point(s) on this day; "
+                        f"at least 2 are required to form a step.")
         return {
             "real": {"type": "FeatureCollection", "features": []},
             "alternative": {"type": "FeatureCollection", "features": []},
@@ -462,7 +446,8 @@ def build_synced_geojson(
         try:
             t = datetime.strptime(str(ts_raw), "%Y-%m-%d %H:%M:%S")
         except ValueError:
-            # Fallback fuer ggf. abweichendes Format (z.B. mit Millisekunden/ISO-T)
+            # Fallback for deviating formats, for example ISO-T or
+            # timestamps carrying milliseconds.
             t = datetime.fromisoformat(str(ts_raw).replace("Z", ""))
         lng, lat = f["geometry"]["coordinates"]
         traj_points.append(TrajectoryPoint(t, lat, lng))
@@ -473,12 +458,12 @@ def build_synced_geojson(
     bear_id = first_props.get("bear_id")
 
     segment = TrajectorySegment(bear_id=bear_id, gender=gender, age=age, segment=traj_points)
-    # Kalender-Saison direkt aus dem Datum (Fabians eigene Logik) - NICHT
-    # das biologische Carpathian-Saisonlabel, das nicht zu bear_speeds passt.
+    # Calendar season derived from the date, not the biological Carpathian
+    # season label, which does not match the bear_speeds table.
     segment.season = BearSeasons().get_season(traj_points[0].time)
 
-    # Ein gemeinsamer Zufallsgenerator fuer Faecher UND Realisierungen:
-    # mit gesetztem Seed ist damit der komplette Lauf reproduzierbar.
+    # One shared random generator for both the fan and the realisations, so
+    # that a fixed seed reproduces the complete run.
     rng = random.Random(seed) if seed is not None else random
 
     dbcon = DatabaseConnection(_SIM_DB_PATH)
@@ -490,15 +475,15 @@ def build_synced_geojson(
 
     if not alternatives_per_step:
         warnings.append(
-            "Keine Alternativen erzeugt - vermutlich fehlen Geschwindigkeitsdaten "
-            f"(bear_speeds) fuer Saison '{segment.season}', Geschlecht '{gender}', Alter '{age}'."
+            "No alternatives generated; speed data (bear_speeds) is probably "
+            f"missing for season '{segment.season}', sex '{gender}', age '{age}'."
         )
 
     real_features = []
     alt_features = []
 
     for step_idx, alt_steps in enumerate(alternatives_per_step):
-        step_time = traj_points[step_idx].time  # Start-Zeitpunkt DIESES Schritts
+        step_time = traj_points[step_idx].time  # start time of THIS step
         for alt in alt_steps:
             lat, lng = alt["end"]
             feat = {
@@ -514,8 +499,7 @@ def build_synced_geojson(
             (real_features if alt["real"] else alt_features).append(feat)
 
     # ------------------------------------------------------------------
-    # Durchgehende simulierte Pfade (mitlaufender Baer, siehe Protokoll:
-    # "Bewegungen echter UND simulierter Baeren")
+    # Continuous simulated paths: the bear that moves alongside the real one
     # ------------------------------------------------------------------
     sim_features = []
     if n_realizations > 0:
@@ -523,7 +507,6 @@ def build_synced_geojson(
             traj_points, alternatives_per_step, n_realizations=n_realizations, rng=rng,
             persistence_mode=persistence_mode,
         )
-        n_stalled = 0
         for r_idx, path in enumerate(realizations):
             for p in path:
                 sim_features.append({
@@ -537,14 +520,15 @@ def build_synced_geojson(
                     },
                     "geometry": {"type": "Point", "coordinates": [p["lng"], p["lat"]]},
                 })
-        # Schritte ohne Geschwindigkeitsdaten: dort bleibt der simulierte
-        # Baer stehen (siehe _build_simulated_realizations) - das soll der
-        # Nutzer wissen, sonst wirkt eine Pause wie ein Verhaltensbefund.
+        # Steps without speed data leave the simulated bear standing still
+        # (see _build_simulated_realizations). This has to be reported,
+        # otherwise a pause looks like a behavioural finding.
         n_stalled = sum(1 for alt in alternatives_per_step if not alt)
         if n_stalled:
             warnings.append(
-                f"Fuer {n_stalled} von {len(alternatives_per_step)} Schritten fehlen "
-                "Geschwindigkeitsdaten - die simulierten Baeren bleiben dort stehen."
+                f"Speed data is missing for {n_stalled} of "
+                f"{len(alternatives_per_step)} steps; the simulated bears "
+                "stay in place there."
             )
 
     return {

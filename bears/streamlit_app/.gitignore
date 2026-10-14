@@ -1,0 +1,28 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environment
+.venv/
+venv/
+
+# Archived one-off scripts and superseded artefacts, kept for reference only
+_archiv/
+
+# Reference literature: copyrighted, not redistributable
+docs/*.pdf
+
+# Terrain data: raw Overpass downloads and the derived local cache.
+# Rebuildable with tools/prefetch_terrain.py, far too large for the repository.
+bear_simulation/data/terrain_prefetch_raw/
+bear_simulation/data/terrain_cache.db
+bear_simulation/data/terrain_cache.db.*
+
+# Generated analysis output
+activity_overlap.png
+*.tmp-*
+
+# Local credentials
+.env
+.streamlit/secrets.toml

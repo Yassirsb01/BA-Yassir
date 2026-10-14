@@ -1,9 +1,9 @@
 """
-Status-Widget fuer neue Bilder
+Sidebar and dashboard widgets reporting newly arrived images.
 """
 
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime
 from new_images_checker import NewImagesChecker
 
 def display_new_images_status(position="sidebar"):
@@ -19,92 +19,88 @@ def display_new_images_status(position="sidebar"):
     # Hole letzte Pruefzeit aus DB (persistent!)
     last_check = checker.get_last_check_time()
     
-    # Falls noch nie geprueft, setze auf jetzt
+    # If no check has ever been recorded, start from now
     if last_check is None:
         checker.update_last_check_time()
         last_check = datetime.now()
     
-    # Berechne, wie lange der letzte Check her ist
+    # Time elapsed since the last check
     time_since_check = datetime.now() - last_check
     minutes_since_check = int(time_since_check.total_seconds() / 60)
     
-    # Container waehlen
+    # Select the container
     container = st.sidebar if position == "sidebar" else st
     
     with container:
-        st.markdown("### Neue Bilder Status")
+        st.markdown("### New image status")
         
         # Pruefe neue Bilder seit letztem Check
         # new_images = checker.get_new_images_since(minutes_ago=minutes_since_check)
         new_images = checker.get_new_images_since(minutes_ago=1440)  # Letzte 24 Stunden=1440min
         
         if new_images:
-            # NEUE BILDER GEFUNDEN!
-            st.success(f"{len(new_images)} neue(s) Bild(er) gefunden!")
-            
-            # Zeige Details in Expander
-            with st.expander("Details anzeigen", expanded=True):
+            st.success(f"{len(new_images)} new image(s) found.")
+
+            with st.expander("Show details", expanded=True):
                 for img in new_images:
-                    system = "E-Mail" if img['source'] == 'email' else "Dateisystem"
+                    system = "E-mail" if img['source'] == 'email' else "File system"
                     
                     st.markdown(f"""
                     **{img['filename'][:30]}...**
                     - Device: {img['device_id']}
-                    - Quelle: {system}
-                    - Typ: {img['image_type']}
-                    - Zeit: {img['created_at']}
+                    - Source: {system}
+                    - Type: {img['image_type']}
+                    - Time: {img['created_at']}
                     """)
                     st.divider()
         else:
-            # Keine neuen Bilder
-            st.info("Noch keine neuen Bilder")
-        
-        # Zeige letzten Check-Zeitpunkt
+            st.info("No new images yet")
+
+        # Time of the last check
         if minutes_since_check == 0:
-            time_text = "vor wenigen Sekunden"
+            time_text = "a few seconds ago"
         elif minutes_since_check == 1:
-            time_text = "vor 1 Minute"
+            time_text = "1 minute ago"
         else:
-            time_text = f"vor {minutes_since_check} Minuten"
+            time_text = f"{minutes_since_check} minutes ago"
         
-        st.caption(f"Zuletzt geprueft: {time_text}")
-        
-        # Refresh-Button
-        if st.button("Jetzt pruefen", key="refresh_images"):
-            checker.update_last_check_time()  # Speichere in DB!
+        st.caption(f"Last checked: {time_text}")
+
+        if st.button("Check now", key="refresh_images"):
+            checker.update_last_check_time()
             st.rerun()
 
 
 def display_compact_status():
     """
-    Kompakte Version - nur eine Zeile
+    Compact variant, a single line.
     """
     checker = NewImagesChecker()
     
-    # Pruefe letzte 24 Stunden
+    # Check the last 24 hours
     new_images = checker.get_new_images_since(minutes_ago=1440)
     
     if new_images:
-        st.info(f"{len(new_images)} neue Bilder in den letzten 24h")
+        st.info(f"{len(new_images)} new images in the last 24 h")
     else:
-        st.caption("Keine neuen Bilder")
+        st.caption("No new images")
 
 
 def display_detailed_dashboard():
     """
-    Ausfuehrliche Dashboard-Version (fuer Hauptseite)
+    Detailed dashboard variant for the main page.
     """
     checker = NewImagesChecker()
     
-    st.markdown("## Bilder-Status Dashboard")
+    st.markdown("## Image status dashboard")
     
-    # Statistiken fuer verschiedene Zeitraeume
+    # Counts over several time windows
     col1, col2, col3 = st.columns(3)
     
     with col1:
         last_hour = checker.get_new_images_since(minutes_ago=60)
         st.metric(
-            label="Letzte Stunde",
+            label="Last hour",
             value=len(last_hour),
             delta=len(last_hour) if last_hour else None
         )
@@ -112,22 +108,22 @@ def display_detailed_dashboard():
     with col2:
         last_day = checker.get_new_images_since(minutes_ago=1440)
         st.metric(
-            label="Letzte 24 Stunden",
+            label="Last 24 hours",
             value=len(last_day)
         )
     
     with col3:
         last_week = checker.get_new_images_since(minutes_ago=10080)
         st.metric(
-            label="Letzte Woche",
+            label="Last week",
             value=len(last_week)
         )
     
-    # Zeige neueste Bilder
+    # Most recent images
     if last_day:
-        st.markdown("### Neueste Bilder (24h)")
+        st.markdown("### Most recent images (24 h)")
         
-        for img in last_day[:5]:  # Max 5 zeigen
+        for img in last_day[:5]:  # show at most five
             with st.container():
                 col_info, col_time = st.columns([3, 1])
                 
@@ -141,4 +137,4 @@ def display_detailed_dashboard():
                 
                 st.divider()
     else:
-        st.info("Keine neuen Bilder in den letzten 24 Stunden")
+        st.info("No new images in the last 24 hours")

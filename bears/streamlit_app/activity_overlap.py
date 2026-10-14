@@ -1,43 +1,43 @@
 """
 activity_overlap.py
 =====================
-Vergleicht das TAGESRHYTHMUS-Muster echter japanischer Kamera-Ausloesungen
-mit dem eines simulierten Baeren (Fabians Bewegungsmodell, uebertragen auf
-die japanische Kamera-Landschaft) - als EINE Kennzahl: den Ueberlappungs-
-koeffizienten Delta (0 = keine Uebereinstimmung, 1 = identisch).
+Compares the DAILY ACTIVITY pattern of real Japanese camera triggers with
+that of a simulated bear (the movement model of Fabian Breu, transferred to
+the Japanese camera landscape), reduced to a single figure: the overlap
+coefficient Delta, where 0 means no agreement and 1 means identical.
 
-Warum gepoolt statt pro Kamera: Ein Test der echten Daten
-(check_japan_data.py) zeigte nur 36-52 Zeitstempel, verteilt auf 8-20
-Kameras - zu duenn fuer eine Verteilung PRO Kamera. Gepoolt ueber alle
-Kameras ist die Stichprobe groesser genug fuer eine (weiterhin vorsichtig
-zu interpretierende) Kerndichteschaetzung.
+Why the data is pooled rather than analysed per camera: the real data holds
+only 36 to 52 timestamps spread over 8 to 20 cameras, which is far too thin
+for a distribution PER camera. Pooled over all cameras the sample is large
+enough for a kernel density estimate, which still has to be interpreted
+with caution.
 
-Methodik (siehe Recherche-Ergebnis, Konzept A + B kombiniert):
-  - Echte Detektionen: Uhrzeiten aus bears_images_unified, OHNE die
-    Platzhalter-Geraete-IDs (199999, 999999 - vermutlich fehlgeschlagene
-    ID-Erkennung beim E-Mail-Import).
-  - Simulierte Detektionen: Viele Monte-Carlo-Laeufe (nicht nur einer wie
-    in japan_comparison.py) - fuer jeden Lauf ein virtueller Baer ab einem
-    zufaelligen Kamerastandort, zufaelligem Geschlecht/Alter/Saison (um
-    ueber unbekannte Demografie zu mitteln), der sich nach Fabians Modell
-    bewegt. Jedes Mal, wenn er einer Kamera nahe genug kommt (Radius
-    DETECTION_RADIUS_M), zaehlt das als "virtuelle Ausloesung" mit der
-    jeweiligen Uhrzeit.
-  - Beide Uhrzeit-Verteilungen werden per Kreis-Dichteschaetzung (wrapped
-    Gaussian KDE - 23 Uhr und 0 Uhr liegen damit korrekt nah beieinander,
-    nicht an gegenueberliegenden Enden einer Linie) geglaettet und ueber
-    den Ueberlappungskoeffizienten Delta = Integral(min(f1,f2)) verglichen -
-    das Standardmass aus der Kamerafallen-Literatur (Ridout & Linkie 2009),
-    hier vereinfacht ohne die R-spezifische 'overlap'-Paket-Implementierung
-    (von-Mises-Kern) nachgebaut, aber nach demselben Prinzip.
-  - Unsicherheit: Bootstrap (Ziehen mit Zurueglegen aus beiden Stichproben,
-    Delta neu berechnen, 1000x) - liefert ein 95%-Konfidenzintervall statt
-    einer einzelnen, unbegruendet praezise wirkenden Zahl.
+Method:
+  - Real detections: times of day from bears_images_unified, excluding the
+    placeholder device IDs (199999, 999999), which most likely come from
+    failed ID detection during the e-mail import.
+  - Simulated detections: many Monte Carlo runs rather than the single run
+    in japan_comparison.py. Each run places a virtual bear at a random
+    camera location with random sex, age and season, in order to average
+    over the unknown demography, and moves it according to the model.
+    Whenever it comes within DETECTION_RADIUS_M of a camera, that counts
+    as a virtual trigger and its time of day is recorded.
+  - Both distributions of times are smoothed by circular density
+    estimation (a wrapped Gaussian KDE, so that 23:00 and 00:00 are
+    correctly treated as close together rather than at opposite ends of a
+    line) and compared through the overlap coefficient
+    Delta = integral(min(f1, f2)). This is the standard measure in the
+    camera trap literature (Ridout and Linkie, 2009), rebuilt here on the
+    same principle but without the von Mises kernel of the R "overlap"
+    package.
+  - Uncertainty: bootstrap resampling with replacement from both samples,
+    recomputing Delta 1000 times, which yields a 95 % confidence interval
+    instead of a single figure that would look unjustifiably precise.
 """
 
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import numpy as np
 
@@ -45,9 +45,9 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-# Wiederverwendung der bereits gebauten und getesteten Bausteine aus
-# japan_comparison.py (Kamera-Liste laden, Pfad simulieren, DB-Check) -
-# keine Dopplung von Logik.
+# Reuse the building blocks already implemented and tested in
+# japan_comparison.py (camera list, path simulation, database check)
+# instead of duplicating the logic.
 from japan_comparison import (  # noqa: E402
     load_japan_cameras, simulate_free_path,
     DatabaseConnection, BearSpeeds, SIM_DB_PATH,
@@ -61,15 +61,15 @@ import threading  # noqa: E402
 
 def check_db_reachable_bounded(db: "WildlifeDatabase", timeout_sec: float = 6.0) -> bool:
     """
-    Wie check_db_reachable() in japan_comparison.py, aber mit einer HARTEN
-    Zeitgrenze ueber einen Hintergrund-Thread (funktioniert plattform-
-    unabhaengig, auch unter Windows - anders als z.B. signal.alarm()).
+    Like check_db_reachable() in japan_comparison.py, but with a HARD time
+    limit enforced through a background thread, which works on every
+    platform including Windows, unlike signal.alarm().
 
-    Grund: mysql.connector hat in WildlifeDatabase keinen expliziten
-    connection_timeout gesetzt. Falls ein Netzwerk Pakete still verwirft
-    statt die Verbindung aktiv abzulehnen, kann der Verbindungsversuch
-    sonst sehr lange (ggf. mehrere Minuten) haengen bleiben, bevor ueberhaupt
-    eine Fehlermeldung kommt - fuer ein interaktives Analyseskript inakzeptabel.
+    Rationale: WildlifeDatabase does not set an explicit connection_timeout
+    for mysql.connector. If a network silently drops packets instead of
+    actively refusing the connection, the attempt can otherwise hang for
+    minutes before any error surfaces, which is unacceptable for an
+    interactive analysis script.
     """
     result = {"ok": False}
 
@@ -85,27 +85,27 @@ def check_db_reachable_bounded(db: "WildlifeDatabase", timeout_sec: float = 6.0)
     t.start()
     t.join(timeout_sec)
     if t.is_alive():
-        # Verbindungsversuch haengt noch nach Ablauf der Frist - als nicht
-        # erreichbar werten. Der Thread ist ein Daemon und haengt hoechstens
-        # im Hintergrund weiter, blockiert das Skript aber nicht mehr.
+        # The attempt is still running after the deadline, so treat the
+        # database as unreachable. The thread is a daemon and may linger in
+        # the background, but it no longer blocks the script.
         return False
     return result["ok"]
 
-# Geraete-IDs, die beim Datencheck als Platzhalter/Fehlwerte aufgefallen
-# sind (kein Muster wie die echten 6-stelligen IDs) - siehe check_japan_data.py.
+# Device IDs identified as placeholders or error values during the data
+# check; they do not follow the pattern of the real six-digit IDs.
 PLACEHOLDER_DEVICE_IDS = {"199999", "999999"}
 
-DETECTION_RADIUS_M = 150  # Wahrnehmungsradius einer Kamera, wie bei japan_comparison.py
+DETECTION_RADIUS_M = 150  # camera detection radius, as in japan_comparison.py
 
 
 # =========================================================
-# 1) Echte Detektionszeiten aus der Datenbank
+# 1) Real detection times from the database
 # =========================================================
 def get_real_detection_hours(db: "WildlifeDatabase", exclude_ids=PLACEHOLDER_DEVICE_IDS):
     """
-    Liest alle Zeitstempel aus bears_images_unified (Dateisystem + E-Mail
-    zusammen - vollstaendiger als nur image_metadata) und wandelt sie in
-    Dezimalstunden um (z.B. 19:30 Uhr -> 19.5).
+    Read all timestamps from bears_images_unified, which combines the file
+    system and e-mail sources and is more complete than image_metadata
+    alone, and convert them to decimal hours (19:30 becomes 19.5).
 
     Returns:
         (hours: list[float], n_excluded: int)
@@ -130,7 +130,7 @@ def get_real_detection_hours(db: "WildlifeDatabase", exclude_ids=PLACEHOLDER_DEV
 
 
 # =========================================================
-# 2) Monte-Carlo-Simulation: virtuelle Kamera-Ausloesungen
+# 2) Monte Carlo simulation: virtual camera triggers
 # =========================================================
 def run_monte_carlo_virtual_detections(
     n_runs: int = 300,
@@ -141,37 +141,36 @@ def run_monte_carlo_virtual_detections(
     capture_run: bool = False,
 ) -> tuple[list[float], dict | None]:
     """
-    Simuliert n_runs unabhaengige Baerenpfade (je hours_per_run Stunden lang)
-    ab zufaelligen Kamerastandorten, mit zufaelligem Geschlecht/Alter/Saison
-    (um ueber unbekannte Demografie der japanischen Population zu mitteln -
-    wir wissen nicht, welches Tier welche Kamera ausgeloest hat). Jede
-    Annaeherung <= detection_radius_m an IRGENDEINE Kamera zaehlt als
-    virtuelle Ausloesung; deren Uhrzeit wird gesammelt.
+    Simulate n_runs independent bear paths, each hours_per_run hours long,
+    from random camera locations with random sex, age and season. The
+    randomisation averages over the unknown demography of the Japanese
+    population, since it is not known which animal triggered which camera.
+    Every approach within detection_radius_m of ANY camera counts as a
+    virtual trigger and its time of day is collected.
 
-    Der Startpunkt selbst (= eine Kamera per Definition) wird NICHT
-    mitgezaehlt, sonst waere jeder Lauf trivial "sofort erkannt".
+    The starting point itself is by definition a camera and is NOT counted,
+    as otherwise every run would trivially be "detected immediately".
 
     Args:
-        capture_run: Falls True, wird zusaetzlich EIN kompletter Lauf (Pfad +
-            Detektions-Ereignisse) zurueckgegeben - fuer eine Animation in der
-            Oberflaeche. Es ist bewusst NICHT der Lauf mit den meisten
-            Treffern (das waere Rosinenpickerei fuer eine huebschere Demo),
-            sondern schlicht der ERSTE Lauf mit mindestens einer Detektion
-            (unter den ersten 15 Laeufen durchsucht, damit die Animation nicht
-            zufaellig einen komplett leeren Lauf erwischt und wie ein Fehler
-            aussieht) - klar als "ein zufaelliger Lauf, kein Best-Case" in
-            der Oberflaeche zu kennzeichnen.
+        capture_run: if True, ONE complete run (path plus detection events)
+            is returned as well, for an animation in the user interface.
+            Deliberately NOT the run with the most hits, which would be
+            cherry-picking for a nicer demonstration, but simply the FIRST
+            run with at least one detection. Only the first 15 runs are
+            searched, so that the animation does not happen to show a
+            completely empty run that looks like a failure. The interface
+            labels it as one random run rather than a best case.
 
     Returns:
-        (virtual_hours, captured_run) - captured_run ist None, falls
-        capture_run=False oder kein Lauf unter den ersten 15 Treffer hatte.
-        captured_run ist sonst ein Dict:
+        (virtual_hours, captured_run). captured_run is None if
+        capture_run=False or if none of the first 15 runs had a hit.
+        Otherwise it is a dict:
           {"path": [...], "detections": [{"time": datetime, "lat", "lng",
            "camera_id"}], "start_camera": {...}}
     """
     cameras = load_japan_cameras()
     if not cameras:
-        raise RuntimeError("Keine Japan-Kamerastandorte gefunden (2024Bear/ReadMe.csv fehlt?).")
+        raise RuntimeError("No Japanese camera locations found; is 2024Bear/ReadMe.csv missing?")
 
     dbcon = DatabaseConnection(SIM_DB_PATH)
     bear_speeds = BearSpeeds(dbcon)
@@ -179,14 +178,14 @@ def run_monte_carlo_virtual_detections(
 
     virtual_hours: list[float] = []
     captured_run: dict | None = None
-    capture_search_budget = 15  # nur die ersten N Laeufe als Kandidat pruefen, siehe Docstring
+    capture_search_budget = 15  # only consider the first N runs, see docstring
 
     for run_idx in range(n_runs):
         start_cam = cameras[rng.integers(0, len(cameras))]
         gender = VALID_GENDERS[rng.integers(0, len(VALID_GENDERS))]
         age = VALID_AGES[rng.integers(0, len(VALID_AGES))]
         season = VALID_SEASONS[rng.integers(0, len(VALID_SEASONS))]
-        start_hour = int(rng.integers(0, 24))  # gleichverteilter Start ueber den Tag, keine Verzerrung
+        start_hour = int(rng.integers(0, 24))  # uniform start over the day, no bias
         start_time = datetime(2024, 1, 1, start_hour, 0, 0)
 
         path = simulate_free_path(
@@ -197,8 +196,8 @@ def run_monte_carlo_virtual_detections(
             terrain_cache=terrain_cache,
         )
 
-        run_detections = []  # nur fuer diesen Lauf, falls er als "captured" in Frage kommt
-        for point in path[1:]:  # [0] ist der Startpunkt = eine Kamera -> ausschliessen
+        run_detections = []  # for this run only, in case it is captured
+        for point in path[1:]:  # [0] is the start point, a camera, so skip it
             pos = (point["lat"], point["lng"])
             for cam in cameras:
                 if geodesic(pos, (cam["lat"], cam["lng"])).meters <= detection_radius_m:
@@ -209,29 +208,29 @@ def run_monte_carlo_virtual_detections(
                         "camera_id": cam.get("device_id"),
                         "camera_lat": cam["lat"], "camera_lng": cam["lng"],
                     })
-                    break  # eine Ausloesung pro Zeitschritt reicht, nicht pro Kamera doppelt zaehlen
+                    break  # one trigger per time step; do not count several cameras
 
         if capture_run and captured_run is None and run_idx < capture_search_budget:
             if run_detections:
                 captured_run = {"path": path, "detections": run_detections, "start_camera": start_cam}
             elif run_idx == capture_search_budget - 1:
-                # Kein einziger der ersten 15 Laeufe hatte eine Detektion -
-                # dann lieber den letzten davon (leer) zeigen als gar keinen,
-                # transparent als "kein Treffer in diesem Beispiel" kennzeichenbar.
+                # None of the first 15 runs produced a detection. Showing
+                # the last of them, empty, is better than showing nothing;
+                # the interface can label it as "no hit in this example".
                 captured_run = {"path": path, "detections": [], "start_camera": start_cam}
 
     return virtual_hours, captured_run
 
 
 # =========================================================
-# 3) Kreis-Dichteschaetzung + Ueberlappungskoeffizient
+# 3) Circular density estimation and overlap coefficient
 # =========================================================
 def circular_kde(hours, grid: np.ndarray, bandwidth: float = 1.5) -> np.ndarray:
     """
-    Wrapped-Gaussian-KDE auf dem 24h-Kreis: Die Daten werden zusaetzlich um
-    -24h und +24h gespiegelt eingerechnet, damit z.B. 23:30 und 00:30 Uhr
-    korrekt als nah beieinander liegend behandelt werden (nicht als
-    entgegengesetzte Enden einer Linie). bandwidth in Stunden.
+    Wrapped Gaussian KDE on the 24 h circle. The data is additionally
+    mirrored by -24 h and +24 h, so that 23:30 and 00:30 are correctly
+    treated as close together rather than at opposite ends of a line.
+    bandwidth is given in hours.
     """
     hours = np.asarray(hours, dtype=float)
     if len(hours) == 0:
@@ -244,8 +243,8 @@ def circular_kde(hours, grid: np.ndarray, bandwidth: float = 1.5) -> np.ndarray:
 
 
 def overlap_coefficient(f1: np.ndarray, f2: np.ndarray, dx: float) -> float:
-    """Delta = Integral(min(f1,f2)) - Standardmass fuer Verteilungsueberlappung
-    (Ridout & Linkie 2009), hier numerisch ueber ein Gitter approximiert."""
+    """Delta = integral(min(f1, f2)), the standard measure of distribution
+    overlap (Ridout and Linkie, 2009), approximated numerically on a grid."""
     return float(np.sum(np.minimum(f1, f2)) * dx)
 
 
@@ -253,11 +252,11 @@ def bootstrap_delta_ci(
     real_hours, sim_hours, grid: np.ndarray, bandwidth: float,
     n_boot: int = 1000, seed: int = 42, return_samples: bool = False,
 ):
-    """Bootstrap-Konfidenzintervall fuer Delta (2.5%, Median, 97.5%).
+    """Bootstrap confidence interval for Delta (2.5 %, median, 97.5 %).
 
-    return_samples=True liefert zusaetzlich alle n_boot Delta-Werte zurueck
-    (fuer ein Histogramm in der Oberflaeche) - Standardfall (False) bleibt
-    unveraendert zum bisherigen Verhalten."""
+    return_samples=True additionally returns all n_boot Delta values, for a
+    histogram in the user interface. The default (False) keeps the previous
+    behaviour."""
     rng = np.random.default_rng(seed)
     real_hours = np.asarray(real_hours, dtype=float)
     sim_hours = np.asarray(sim_hours, dtype=float)
@@ -280,49 +279,51 @@ def bootstrap_delta_ci(
 
 
 # =========================================================
-# 4) Diagramme (von Skript UND Streamlit-Seite gemeinsam genutzt -
-#    eine einzige Implementierung, damit beide niemals auseinanderlaufen)
+# 4) Figures, shared by the console script AND the Streamlit page, so that
+#    there is only one implementation and the two cannot diverge
 # =========================================================
 def build_activity_overlap_figure(grid, f_real, f_sim, delta, ci_low, ci_high, n_real, n_sim):
-    """Erzeugt die Vergleichs-Abbildung als matplotlib-Figure (wird NICHT
-    gespeichert - das macht der Aufrufer, je nach Kontext unterschiedlich:
-    Skript -> Datei, Streamlit-Seite -> st.pyplot())."""
+    """Build the comparison figure as a matplotlib figure. It is NOT saved
+    here; the caller decides, writing a file from the script or passing it
+    to st.pyplot() from the Streamlit page."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(9, 5))
-    ax.axvspan(18, 24, color="black", alpha=0.05, label="Nacht (18–06 Uhr)")
+    ax.axvspan(18, 24, color="black", alpha=0.05, label="Night (18:00-06:00)")
     ax.axvspan(0, 6, color="black", alpha=0.05)
-    ax.plot(grid, f_real, color="#1d6fb8", lw=2.2, label=f"Echte Detektionen (Japan, n={n_real})")
-    ax.plot(grid, f_sim, color="#e8830c", lw=2.2, label=f"Simulierter Bär (Carpathian-Modell, n={n_sim})")
+    ax.plot(grid, f_real, color="#1d6fb8", lw=2.2, label=f"Real detections (Japan, n={n_real})")
+    ax.plot(grid, f_sim, color="#e8830c", lw=2.2, label=f"Simulated bear (Carpathian model, n={n_sim})")
     ax.fill_between(grid, np.minimum(f_real, f_sim), color="#6b6b6b", alpha=0.35,
-                     label=f"Überlappung (Δ={delta:.2f})")
+                     label=f"Overlap (delta={delta:.2f})")
     ax.set_xlim(0, 24)
     ax.set_xticks(range(0, 25, 2))
-    ax.set_xlabel("Uhrzeit")
-    ax.set_ylabel("Aktivitätsdichte")
-    ax.set_title(f"Tagesrhythmus-Vergleich: Δ = {delta:.2f}  (95%-Bootstrap-KI [{ci_low:.2f}, {ci_high:.2f}])")
+    ax.set_xlabel("Time of day")
+    ax.set_ylabel("Activity density")
+    ax.set_title(f"Daily activity comparison: delta = {delta:.2f}  "
+                 f"(95 % bootstrap CI [{ci_low:.2f}, {ci_high:.2f}])")
     ax.legend(loc="upper left", fontsize=9)
     fig.tight_layout()
     return fig
 
 
 def build_bootstrap_histogram_figure(deltas: np.ndarray, delta_point: float, ci_low: float, ci_high: float):
-    """Histogramm der Bootstrap-Delta-Werte mit Punktschaetzung + Konfidenzband."""
+    """Histogram of the bootstrap Delta values with point estimate and
+    confidence band."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(9, 4.2))
     ax.hist(deltas, bins=40, color="#8fb8dd", edgecolor="white")
-    ax.axvline(delta_point, color="black", lw=2.2, label=f"Δ aus den Originaldaten = {delta_point:.2f}")
-    ax.axvline(ci_low, color="#c0392b", lw=1.8, ls="--", label=f"95%-Grenzen: [{ci_low:.2f}, {ci_high:.2f}]")
+    ax.axvline(delta_point, color="black", lw=2.2, label=f"delta from the original data = {delta_point:.2f}")
+    ax.axvline(ci_low, color="#c0392b", lw=1.8, ls="--", label=f"95 % bounds: [{ci_low:.2f}, {ci_high:.2f}]")
     ax.axvline(ci_high, color="#c0392b", lw=1.8, ls="--")
     ax.axvspan(ci_low, ci_high, color="#c0392b", alpha=0.08)
-    ax.set_xlabel("Δ-Wert einer einzelnen Wiederholung")
-    ax.set_ylabel(f"Anzahl der {len(deltas)} Wiederholungen")
-    ax.set_title("Bootstrap: wie stark streut Δ bei leicht anderer Stichprobe?")
+    ax.set_xlabel("Delta of a single resample")
+    ax.set_ylabel(f"Count out of {len(deltas)} resamples")
+    ax.set_title("Bootstrap: how much does delta vary under a slightly different sample?")
     ax.legend(fontsize=9)
     fig.tight_layout()
     return fig
@@ -330,8 +331,8 @@ def build_bootstrap_histogram_figure(deltas: np.ndarray, delta_point: float, ci_
 
 def plot_activity_overlap(grid, f_real, f_sim, delta, ci_low, ci_high,
                            n_real, n_sim, out_path="activity_overlap.png"):
-    """Duenner Wrapper um build_activity_overlap_figure() fuer den
-    Kommandozeilen-Gebrauch (speichert zusaetzlich als Datei)."""
+    """Thin wrapper around build_activity_overlap_figure() for command line
+    use, which additionally writes the figure to a file."""
     import matplotlib.pyplot as plt
     fig = build_activity_overlap_figure(grid, f_real, f_sim, delta, ci_low, ci_high, n_real, n_sim)
     fig.savefig(out_path, dpi=150)
@@ -340,7 +341,7 @@ def plot_activity_overlap(grid, f_real, f_sim, delta, ci_low, ci_high,
 
 
 # =========================================================
-# 5) Gesamtablauf
+# 5) Complete run
 # =========================================================
 def run_full_analysis(
     n_runs: int = 300,
@@ -353,43 +354,43 @@ def run_full_analysis(
     out_path: str = "activity_overlap.png",
 ) -> dict | None:
     print("=" * 70)
-    print("Tagesrhythmus-Vergleich: echte Japan-Detektionen vs. simulierter Bär")
+    print("Daily activity comparison: real Japanese detections vs. simulated bear")
     print("=" * 70)
 
-    print(f"Starte Monte-Carlo-Simulation: {n_runs} Läufe × {hours_per_run}h "
-          f"(Erfassungsradius {detection_radius_m}m)...")
+    print(f"Starting Monte Carlo simulation: {n_runs} runs x {hours_per_run} h "
+          f"(detection radius {detection_radius_m} m)...")
     result = compute_comparison(
         n_runs=n_runs, hours_per_run=hours_per_run, detection_radius_m=detection_radius_m,
         bandwidth=bandwidth, n_boot=n_boot, use_terrain=use_terrain, seed=seed,
     )
 
     if not result["db_ok"]:
-        print("[Hinweis] MariaDB nicht erreichbar (VPN aktiv?) - "
-              "es wird nur die simulierte Seite berechnet, kein Vergleich möglich.")
+        print("[note] MariaDB not reachable (is the VPN active?). Only the "
+              "simulated side is computed; no comparison is possible.")
     else:
-        print(f"Echte Detektionen: {result['n_real']} "
-              f"({result['n_excluded']} Platzhalter-Geräte-IDs ausgeschlossen)")
+        print(f"Real detections: {result['n_real']} "
+              f"({result['n_excluded']} placeholder device IDs excluded)")
         if result["n_real"] < 20:
-            print("[Hinweis] Kleine Stichprobe (<20) - Ergebnis nur explorativ interpretierbar, "
-                  "siehe Bootstrap-Konfidenzintervall unten.")
+            print("[note] Small sample (<20); the result is exploratory only, "
+                  "see the bootstrap confidence interval below.")
 
-    print(f"Virtuelle Detektionen (simuliert): {result['n_sim']}")
+    print(f"Virtual detections (simulated): {result['n_sim']}")
     if not result["n_sim"]:
-        print("Keine virtuellen Detektionen erzeugt - Radius vergrößern oder mehr Läufe/Stunden.")
+        print("No virtual detections generated; increase the radius or use more runs or hours.")
         return None
     if not result["n_real"]:
-        print("\nKein Vergleich möglich ohne echte Daten (siehe Hinweis oben).")
+        print("\nNo comparison possible without real data (see the note above).")
         return result
 
-    print(f"\nÜberlappungskoeffizient Δ = {result['delta']:.3f}")
-    print(f"95%-Bootstrap-Konfidenzintervall: [{result['ci_low']:.3f}, {result['ci_high']:.3f}]")
+    print(f"\nOverlap coefficient delta = {result['delta']:.3f}")
+    print(f"95 % bootstrap confidence interval: [{result['ci_low']:.3f}, {result['ci_high']:.3f}]")
 
     saved_to = plot_activity_overlap(
         result["grid"], result["f_real"], result["f_sim"], result["delta"],
         result["ci_low"], result["ci_high"],
         n_real=result["n_real"], n_sim=result["n_sim"], out_path=out_path,
     )
-    print(f"\nDiagramm gespeichert: {saved_to}")
+    print(f"\nFigure written to: {saved_to}")
     result["plot_path"] = saved_to
     return result
 
@@ -405,14 +406,13 @@ def compute_comparison(
     capture_run: bool = False,
 ) -> dict:
     """
-    Einziger Ort, an dem die komplette Berechnung passiert - vom Konsolen-
-    Skript (run_full_analysis) UND von der Streamlit-Seite gleichermassen
-    genutzt, damit es niemals zwei Implementierungen gibt, die im Ergebnis
-    auseinanderlaufen koennten.
+    The single place where the complete computation happens, used both by
+    the console script (run_full_analysis) and by the Streamlit page, so
+    that there can never be two implementations whose results diverge.
 
-    Wirft KEINE Exception bei fehlender DB-Verbindung - meldet das ueber
-    result["db_ok"] = False, result["delta"] = None, laesst aber die
-    Simulation trotzdem laufen (z.B. fuer die Kartenanimation allein).
+    Does NOT raise when the database is unavailable. It reports this
+    through result["db_ok"] = False and result["delta"] = None but still
+    runs the simulation, which is useful for the map animation on its own.
     """
     db = WildlifeDatabase()
     db_ok = check_db_reachable_bounded(db)
@@ -461,4 +461,13 @@ def compute_comparison(
 
 
 if __name__ == "__main__":
+    # The Windows console defaults to cp1252 and cannot print every
+    # character used here. The script used to crash with a
+    # UnicodeEncodeError at the result output, AFTER the complete Monte
+    # Carlo computation had already run. errors="replace" rather than
+    # "strict": a question mark in the text is preferable to a lost run.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     run_full_analysis()

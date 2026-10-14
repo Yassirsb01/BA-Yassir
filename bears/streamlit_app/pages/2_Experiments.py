@@ -1,28 +1,26 @@
 """
-pages/2_Experimente.py
+pages/2_Experiments.py
 ========================
-Analyse-Seite: Bewegungs-Animation der Carpathian-Baeren. Echte GPS-Route
-und mehrere simulierte Baeren laufen auf derselben Zeitachse nebeneinander
-(siehe sync_simulation.py), zusaetzlich einblendbar der Faecher der
-Alternativ-Kandidaten pro Schritt.
+Analysis page: movement animation of the Carpathian bears. The real GPS
+route and several simulated bears advance along the same time axis (see
+sync_simulation.py); the fan of candidate steps can be shown in addition.
 
-Warum MEHRERE simulierte Baeren statt einem: Jeder Pfad ist nur eine
-Zufallsziehung aus dem Modell. Ein einzelner Pfad neben der echten Route
-wuerde als "das Modell sagt diesen Weg voraus" gelesen - mehrere
-auseinanderlaufende Pfade zeigen den Moeglichkeitsraum unmittelbar.
-Ueber den Seed ist jeder Lauf exakt reproduzierbar (wichtig fuer
-Abbildungen in der Bachelorarbeit).
+Why SEVERAL simulated bears instead of one: each path is only one random
+draw from the model. A single path next to the real route would be read
+as "the model predicts this route", whereas several diverging paths show
+the space of possibilities directly. The seed makes every run exactly
+reproducible, which matters for figures.
 
-Zielgruppe sind Forschende, die nachvollziehen wollen, wie sich ein
-konkreter Baer an einem konkreten Tag im Gelaende bewegt hat und wie
-plausibel die simulierten Alternativen dazu sind. Deshalb:
-  - Filter nach Bär, Jahreszeit und Tag (nur Tage MIT Daten waehlbar)
-  - Datenherkunft wird explizit angezeigt (MariaDB vs. CSV-Fallback)
-  - Satellitenbild + optionales 3D-Gelaende fuer raeumlichen Kontext
+The page is aimed at readers who want to follow how a particular bear
+moved through the terrain on a particular day, and how plausible the
+simulated alternatives are. Therefore:
+  - filters for bear, season and day (only days WITH data are selectable)
+  - the data source is shown explicitly (MariaDB or CSV fallback)
+  - satellite imagery and optional 3D terrain for spatial context
 
-Performance-Prinzip: server-seitig immer nur EIN Tag laden (dafuer in
-voller Aufloesung, ohne Downsampling) - nicht die komplette
-Mehrjahres-Historie.
+Performance principle: only ONE day is loaded server-side, but at full
+resolution without downsampling, rather than the complete multi-year
+history.
 """
 
 import streamlit as st
@@ -36,14 +34,14 @@ st.set_page_config(page_title="Bewegungs-Animation", layout="wide")
 
 
 # ============================================================
-# Datenherkunft ermitteln (fuer die Anzeige auf der Karte)
+# Determine the data source, for display on the map
 # ============================================================
 @st.cache_data(ttl=300, show_spinner=False)
 def _get_data_source_label() -> str:
     """
-    Prueft einmalig (gecacht), ob die MariaDB erreichbar ist. Wichtig fuer
-    die Nachvollziehbarkeit: Forschende sollen sehen, ob sie Live-Daten aus
-    der Projektdatenbank oder den lokalen CSV-Fallback vor sich haben.
+    Check once, cached, whether MariaDB is reachable. This matters for
+    traceability: it has to be visible whether the data comes live from
+    the project database or from the local CSV fallback.
     """
     try:
         from wildlife_db_mariadb import WildlifeDatabase
@@ -54,29 +52,29 @@ def _get_data_source_label() -> str:
         database = db.db_config.get("database", "?")
         return f"MariaDB · {database}@{host}"
     except Exception:
-        return "Lokaler CSV-Fallback (keine DB-Verbindung)"
+        return "Local CSV fallback (no database connection)"
 
 
 @st.cache_data(show_spinner=False)
 def _load_and_simulate(bear: str, date_str: str, seasons_key: tuple,
                        num_alt: int, n_real: int, seed: int) -> dict:
     """
-    Laedt EINEN Tag und berechnet die Simulation dazu - gecacht.
+    Load ONE day and compute the matching simulation, cached.
 
-    WARUM GECACHT (Fehlerbild "simulierte Pfade springen"): Streamlit fuehrt
-    bei JEDER Interaktion das komplette Skript neu aus. Ohne Cache lief
-    build_synced_geojson() dabei jedes Mal neu, das erzeugte HTML der
-    Kartenkomponente aenderte sich, das iframe wurde neu aufgebaut - und die
-    Animation begann von vorn. Mit Cache liefert ein Rerun bei unveraenderten
-    Parametern exakt dasselbe Ergebnis, das iframe bleibt stehen.
+    Why this is cached: Streamlit re-executes the whole script on EVERY
+    interaction. Without a cache, build_synced_geojson() ran again each
+    time, the generated HTML of the map component changed, the iframe was
+    rebuilt and the animation restarted from the beginning. With the
+    cache, a rerun with unchanged parameters returns exactly the same
+    result and the iframe stays in place.
 
-    WICHTIG - alle Eingaben sind skalar: Der Tag wird INNERHALB der Funktion
-    geladen, statt das GeoJSON als Argument hereinzureichen. Sonst muesste
-    st.cache_data bei jedem Rerun ein Dict mit tausenden Features hashen.
+    All inputs are scalar: the day is loaded INSIDE the function instead
+    of passing the GeoJSON in as an argument. Otherwise st.cache_data
+    would have to hash a dict with thousands of features on every rerun.
 
-    seasons_key ist ein Tupel (hashbar) und gehoert bewusst zum
-    Cache-Schluessel: die Saisonauswahl bestimmt mit, welche Punkte der Tag
-    ueberhaupt enthaelt.
+    seasons_key is a tuple, and therefore hashable, and deliberately part
+    of the cache key: the season selection determines which points the
+    day contains in the first place.
     """
     from carpathian_bears import get_carpathian_geojson
 
@@ -90,7 +88,7 @@ def _load_and_simulate(bear: str, date_str: str, seasons_key: tuple,
         end_datetime=end_dt,
         selected_seasons=list(seasons_key),
         map_type="Movement Paths",
-        max_points_per_bear=50000,  # 1 Tag: keine Reduktion noetig
+        max_points_per_bear=50000,  # one day, so no reduction is needed
     )
 
     synced = sync.build_synced_geojson(
@@ -109,13 +107,12 @@ def _load_and_simulate(bear: str, date_str: str, seasons_key: tuple,
 
 def _run_id(sim_geojson: dict) -> str:
     """
-    Kurze Kennung der simulierten Pfade (Hash ueber alle Koordinaten).
+    Short identifier of the simulated paths, a hash over all coordinates.
 
-    Dient der Fehlersuche und der Nachvollziehbarkeit: bleibt die Kennung
-    ueber einen Rerun hinweg gleich, ist die Simulation unveraendert und die
-    Animation wurde lediglich neu gestartet. Aendert sie sich, haben sich
-    tatsaechlich die Daten geaendert. Fuer die Bachelorarbeit ausserdem
-    praktisch, um einen Screenshot spaeter eindeutig zuzuordnen.
+    Useful for debugging and for traceability: if the identifier stays the
+    same across a rerun, the simulation is unchanged and the animation was
+    merely restarted. If it changes, the data really did change. It also
+    makes it possible to match a screenshot to a specific run later.
     """
     import hashlib
     coords = "".join(
@@ -125,18 +122,16 @@ def _run_id(sim_geojson: dict) -> str:
     return hashlib.sha1(coords.encode()).hexdigest()[:8] if coords else "–"
 
 
-st.title("Bewegungs-Animation: Echt vs. Simuliert")
+st.title("Movement animation: real versus simulated")
 st.caption(
-    "Ein Bär, ein Tag – die echte GPS-Bewegung (blau) und mehrere simulierte Bären "
-    "(orange) laufen auf derselben Zeitachse nebeneinander. Zusätzlich einblendbar: "
-    "der Fächer der Alternativ-Kandidaten pro Schritt (grau). "
-    "Datensatz: Carpathian Bears, GPS-Tracking Rumänien."
+    "One bear, one day: the real GPS movement (blue) and several simulated "
+    "bears (orange) advance along the same time axis. The fan of candidate "
+    "steps (grey) can be shown in addition. "
+    "Dataset: Carpathian Bears, GPS tracking in Romania."
 )
 
-# Erklaerung bewusst auf ENGLISCH: die Arbeit wird vor der Abgabe auf
-# Englisch umgestellt, und dieser Abschnitt ist der Teil, den Betreuer und
-# andere Forschende zuerst lesen. Die uebrige Oberflaeche bleibt vorerst
-# deutsch.
+# Introductory section shown above the map, aimed at readers who open the
+# page without prior knowledge of the project.
 with st.expander("What am I looking at?  ·  About this experiment", expanded=False):
     st.markdown("""
 **The dataset.** GPS collar data from brown bears (*Ursus arctos*) in the
@@ -185,11 +180,11 @@ selected_bear_label = ""
 source_label = _get_data_source_label()
 
 # ============================================================
-# Sidebar: Bär -> Jahreszeit -> Tag (nur Tage MIT Daten)
+# Sidebar: bear, then season, then day (only days WITH data)
 # ============================================================
 with st.sidebar:
-    st.header("Auswahl")
-    st.caption(f"Datenquelle: {source_label}")
+    st.header("Selection")
+    st.caption(f"Data source: {source_label}")
 
     try:
         from carpathian_bears import (get_carpathian_geojson, get_carpathian_options,
@@ -198,24 +193,24 @@ with st.sidebar:
         bears, seasons, min_date, max_date = get_carpathian_options()
 
         if not bears:
-            st.info("Keine Carpathian-Daten gefunden.")
+            st.info("No Carpathian data found.")
         else:
-            sel_bear = st.selectbox("Bär", bears, key="anim_bear")
+            sel_bear = st.selectbox("Bear", bears, key="anim_bear")
 
             sel_seasons = st.multiselect(
-                "Jahreszeit", seasons, default=seasons,
-                help="Schränkt die auswählbaren Tage auf die gewählten Phasen ein.\n\n"
+                "Season", seasons, default=seasons,
+                help="Restricts the selectable days to the chosen phases.\n\n"
                      + SEASON_HELP,
             )
             st.caption(
-                "Biologische Jahresphasen des Bären, keine Kalenderjahreszeiten – "
-                "Erklärung über das (?)."
+                "Biological annual phases of the bear, not calendar seasons. "
+                "See the (?) for details."
             )
             if not sel_seasons:
-                sel_seasons = seasons  # leere Auswahl = keine Einschränkung
+                sel_seasons = seasons  # an empty selection means no restriction
 
-            # Welche Tage hat dieser Bär in diesen Saisons ueberhaupt Daten?
-            # Gecacht, damit die Abfrage nicht bei jeder Interaktion laeuft.
+            # Which days does this bear have data for in these seasons?
+            # Cached so the query does not run on every interaction.
             @st.cache_data(ttl=3600, show_spinner=False)
             def _get_available_dates(bear, seasons_tuple, min_d, max_d):
                 fc = get_carpathian_geojson(
@@ -233,64 +228,64 @@ with st.sidebar:
                         dates.add(str(ts)[:10])
                 return sorted(dates)
 
-            with st.spinner(f"Prüfe verfügbare Tage für {sel_bear}..."):
+            with st.spinner(f"Checking available days for {sel_bear}..."):
                 available_dates = _get_available_dates(
                     sel_bear, tuple(sorted(sel_seasons)), min_date, max_date
                 )
 
             if not available_dates:
                 st.warning(
-                    f"Keine GPS-Daten für {sel_bear} in den gewählten Jahreszeiten. "
-                    "Andere Saison oder anderen Bären wählen."
+                    f"No GPS data for {sel_bear} in the selected seasons. "
+                    "Choose a different season or a different bear."
                 )
             else:
                 with st.form("anim_form"):
                     sel_date_str = st.selectbox(
-                        "Tag", available_dates,
-                        help=f"{len(available_dates)} Tage mit echten GPS-Daten.",
+                        "Day", available_dates,
+                        help=f"{len(available_dates)} days with real GPS data.",
                     )
                     num_alt = st.slider(
-                        "Alternativen pro Schritt", 3, 20, 10,
-                        help="Wie viele Kandidatenrichtungen das Modell pro echtem "
-                             "GPS-Schritt erzeugt (Fächer auf der Karte).",
+                        "Alternatives per step", 3, 20, 10,
+                        help="How many candidate headings the model generates per "
+                             "real GPS step (the fan on the map).",
                     )
                     n_real = st.slider(
-                        "Simulierte Bären (Realisierungen)", 0, 8, 3,
-                        help="Jeder simulierte Bär ist EIN möglicher Modelllauf, keine "
-                             "Vorhersage. Mehrere Läufe zeigen, wie weit das Modell bei "
-                             "gleichem Start streuen kann. 0 blendet sie aus.",
+                        "Simulated bears (realisations)", 0, 8, 3,
+                        help="Each simulated bear is ONE possible model run, not a "
+                             "prediction. Several runs show how far the model can "
+                             "spread from an identical start. 0 hides them.",
                     )
                     anim_seed = st.number_input(
-                        "Zufalls-Seed", min_value=0, max_value=999999, value=42,
-                        help="Gleicher Seed = exakt derselbe Lauf. Seed ändern = neue "
-                             "Realisierungen würfeln (wichtig, um zu sehen, dass ein "
-                             "einzelner Pfad nichts beweist).",
+                        "Random seed", min_value=0, max_value=999999, value=42,
+                        help="The same seed reproduces exactly the same run. Changing "
+                             "the seed draws new realisations, which shows that a "
+                             "single path proves nothing.",
                     )
-                    submitted = st.form_submit_button("Laden", type="primary")
+                    submitted = st.form_submit_button("Load", type="primary")
 
                 if submitted:
-                    # sel_seasons gehoert MIT in die Parameter: frueher wurde
-                    # es live aus dem Multiselect gelesen, wodurch eine
-                    # Aenderung der Saisonauswahl den bereits geladenen Tag
-                    # still veraendert hat (andere Punktmenge -> andere
-                    # Simulation, im Extremfall gar keine Punkte mehr).
+                    # sel_seasons belongs in the parameters. It used to be
+                    # read live from the multiselect, so changing the season
+                    # selection silently altered the already loaded day: a
+                    # different set of points, a different simulation, and
+                    # in the extreme case no points at all.
                     st.session_state["anim_params"] = (
                         sel_bear, sel_date_str, tuple(sorted(sel_seasons)),
                         num_alt, int(n_real), int(anim_seed),
                     )
 
-                # Aus einer aelteren Programmversion koennen noch Parameter
-                # mit anderer Feldzahl in der Session liegen - die dann
-                # einfach verwerfen statt mit einem ValueError abzustuerzen.
+                # An older program version may have left parameters with a
+                # different field count in the session. Discard those
+                # instead of crashing with a ValueError.
                 if len(st.session_state.get("anim_params", ())) != 6:
                     st.session_state.pop("anim_params", None)
 
                 if "anim_params" in st.session_state:
                     (loaded_bear, loaded_date_str, loaded_seasons,
                      loaded_num_alt, loaded_n_real, loaded_seed) = st.session_state["anim_params"]
-                    selected_bear_label = f"BÄR {loaded_bear}"
+                    selected_bear_label = f"BEAR {loaded_bear}"
 
-                    with st.spinner(f"Lade {loaded_bear} am {loaded_date_str}..."):
+                    with st.spinner(f"Loading {loaded_bear} on {loaded_date_str}..."):
                         try:
                             _res = _load_and_simulate(
                                 loaded_bear, loaded_date_str, loaded_seasons,
@@ -301,37 +296,37 @@ with st.sidebar:
                             sim_geojson = _res["simulated"]
                             sync_warnings = _res["warnings"]
                         except Exception as e:
-                            st.error(f"Fehler bei der Simulations-Berechnung: {e}")
+                            st.error(f"Error while computing the simulation: {e}")
 
     except Exception as e:
-        st.error(f"Fehler beim Laden der Daten: {e}")
+        st.error(f"Error while loading the data: {e}")
 
     for w in sync_warnings:
         st.warning(w)
 
     st.markdown("---")
     st.caption(
-        "Hinweis: Der Gesamtpfad ist beim Start bewusst ausgeblendet, damit die "
-        "Bewegung erst beim Abspielen entsteht. Auf der Karte einblendbar."
+        "The full path is hidden on start so that the movement only emerges "
+        "during playback. It can be shown on the map."
     )
 
 # ============================================================
-# Animations-Karte
+# Animation map
 # ============================================================
 if carpathian_data is None:
-    st.info("Links Bär, Jahreszeit und Tag auswählen und auf **Laden** klicken.")
+    st.info("Select bear, season and day in the sidebar, then press **Load**.")
 else:
     n_pts = len(carpathian_data.get("points", {}).get("features", []))
     if n_pts == 0:
-        st.warning("Für diesen Tag wurden keine GPS-Punkte geladen. Anderen Tag wählen.")
+        st.warning("No GPS points were loaded for this day. Choose a different day.")
     else:
-        # Lauf-Kennung: bleibt ueber Reruns hinweg gleich, solange sich die
-        # Simulation nicht aendert. Aendert sie sich doch, ist das hier
-        # sofort sichtbar (siehe _run_id).
+        # Run identifier: stays the same across reruns as long as the
+        # simulation does not change, so a change is immediately visible
+        # (see _run_id).
         st.caption(
-            f"Lauf-Kennung `{_run_id(sim_geojson)}` · Bär {loaded_bear} · {loaded_date_str} · "
-            f"{loaded_n_real} Realisierungen · Seed {loaded_seed} · "
-            f"{loaded_num_alt} Alternativen/Schritt"
+            f"Run ID `{_run_id(sim_geojson)}` - bear {loaded_bear} - {loaded_date_str} - "
+            f"{loaded_n_real} realisations - seed {loaded_seed} - "
+            f"{loaded_num_alt} alternatives per step"
         )
 
         anim.render_animation_map(
@@ -340,32 +335,32 @@ else:
             simulated=sim_geojson,
             basemap="Satellit",
             bear_label=selected_bear_label,
-            dataset_label="Carpathian Bears · GPS-Tracking (Rumänien)",
+            dataset_label="Carpathian Bears - GPS tracking (Romania)",
             source_label=source_label,
             height=900,
         )
 
-        st.markdown("### Daten zur aktuellen Ansicht")
-        _tabs = st.tabs(["Echte GPS-Punkte", "Simulierte Pfade", "Alternativ-Kandidaten"])
+        st.markdown("### Data behind the current view")
+        _tabs = st.tabs(["Real GPS points", "Simulated paths", "Candidate steps"])
         with _tabs[0]:
             df_real = geojson_to_dataframe(carpathian_data.get("points"))
-            st.caption(f"{len(df_real)} echte GPS-Punkte für {selected_bear_label}, {loaded_date_str}")
+            st.caption(f"{len(df_real)} real GPS points for {selected_bear_label}, {loaded_date_str}")
             st.dataframe(df_real, width="stretch")
         with _tabs[1]:
             df_sim = geojson_to_dataframe(sim_geojson)
             if df_sim.empty:
-                st.info("Keine simulierten Pfade berechnet (Regler auf 0?).")
+                st.info("No simulated paths computed (is the slider at 0?).")
             else:
                 st.caption(
-                    f"{len(df_sim)} simulierte Positionen über {loaded_n_real} Realisierungen "
-                    f"(Seed {loaded_seed}) – jede Realisierung ist ein möglicher Modelllauf, "
-                    "keine Vorhersage."
+                    f"{len(df_sim)} simulated positions across {loaded_n_real} realisations "
+                    f"(seed {loaded_seed}). Each realisation is one possible model run, "
+                    "not a prediction."
                 )
                 st.dataframe(df_sim, width="stretch")
         with _tabs[2]:
             df_alt = geojson_to_dataframe(alt_geojson)
             if df_alt.empty:
-                st.info("Keine Alternativ-Kandidaten berechnet.")
+                st.info("No candidate steps computed.")
             else:
-                st.caption(f"{len(df_alt)} Alternativ-Kandidaten (Fabians Modell)")
+                st.caption(f"{len(df_alt)} candidate steps (movement model)")
                 st.dataframe(df_alt, width="stretch")

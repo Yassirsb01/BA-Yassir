@@ -1,53 +1,52 @@
 """
 animation_component.py
 ========================
-Eigenstaendige MapLibre-Karte fuer die Bewegungs-Animation der
-Carpathian-Baeren (echte GPS-Route + zugehoerige Alternativ-Kandidaten
-aus Fabians Modell, siehe sync_simulation.py) - garantiert derselbe
-Baer, derselbe Tag, dieselben Zeitpunkte.
+Standalone MapLibre map for the movement animation of the Carpathian
+bears: the real GPS route together with the matching candidate steps from
+the movement model (see sync_simulation.py), guaranteed to be the same
+bear, the same day and the same timestamps.
 
-Ausgelegt als Analysewerkzeug: Forschende sollen nachvollziehen koennen,
-WO und WANN sich ein Baer bewegt hat und wie plausibel die simulierten
-Alternativen dazu sind.
+Designed as an analysis tool, so that it is possible to follow WHERE and
+WHEN a bear moved and how plausible the simulated alternatives are.
 
-Darstellung:
-  - Blauer Punkt + mitwachsende Spur: die ECHTE GPS-Bewegung, zwischen den
-    Fixpunkten interpoliert. Der Gesamtpfad ist standardmaessig NICHT
-    vorgezeichnet (sonst waere das Ergebnis schon vor dem Abspielen
-    sichtbar) - per Schalter einblendbar.
-  - Orange Punkte + Spuren: die SIMULIERTEN Baeren, die synchron zum echten
-    mitlaufen (sync_simulation.build_synced_geojson()["simulated"]). Es sind
-    bewusst MEHRERE, weil jeder Pfad nur EINE Zufallsziehung aus dem Modell
-    ist - keine Vorhersage. Die Streuung zwischen den Linien ist die
-    eigentliche Aussage: sie zeigt, wie gross der Moeglichkeitsraum des
-    Modells bei identischem Start ist.
-  - Grauer "Faecher" (abschaltbar): an JEDEM echten Schritt alle N
-    Alternativ-Kandidaten, die das Modell an genau diesem Punkt/Zeitpunkt
-    erzeugt hat. KEIN eigener Pfad - die Alternativen sind N unabhaengige
-    Optionen PRO Schritt, also der Moeglichkeitsraum eines EINZELNEN
-    Schritts (waehrend die orangen Spuren zeigen, was daraus ueber viele
-    Schritte hinweg wird).
+Display:
+  - Blue dot with a growing trail: the REAL GPS movement, interpolated
+    between fixes. The full path is NOT drawn in advance by default,
+    which would reveal the result before playback, but can be shown with
+    a toggle.
+  - Orange dots and trails: the SIMULATED bears moving in step with the
+    real one (sync_simulation.build_synced_geojson()["simulated"]).
+    Several are shown deliberately, because each path is only ONE random
+    draw from the model and not a prediction. The spread between the
+    lines is the actual statement: it shows how large the space of
+    possibilities is for an identical starting point.
+  - Grey fan (can be switched off): at EVERY real step, all N candidate
+    moves the model generated at that point in time. This is not a path
+    of its own; the alternatives are N independent options PER step, that
+    is, the space of possibilities of a SINGLE step, whereas the orange
+    trails show what that becomes over many steps.
 
-Kartengrundlagen:
-  - Satellit (Esri World Imagery) fuer Gelaendekontext - dieselbe Quelle,
-    die auch carpathian_bears.py schon nutzt
-  - Positron / Liberty / Dark Matter als Vektor-Alternativen
-  - Optionaler 3D-Modus: Hoehenmodell (Mapterhorn, kostenfrei ohne
-    Schluessel - Quelle aus dem offiziellen MapLibre-3D-Beispiel) +
-    Kameraneigung. Bewusst opt-in, da zusaetzliche Netzwerk-Kacheln noetig
-    sind; bei Fehlern bleibt die Karte in 2D nutzbar (Hinweis im Panel).
+Base maps:
+  - Satellite (Esri World Imagery) for terrain context, the same source
+    already used by carpathian_bears.py
+  - Positron, Liberty and Dark Matter as vector alternatives
+  - Optional 3D mode: elevation model (Mapterhorn, free and without an
+    API key, the source used by the official MapLibre 3D example) plus
+    camera pitch. Deliberately opt-in because it requires additional
+    network tiles; on failure the map stays usable in 2D and a note is
+    shown in the panel.
 """
 
 import json
 import streamlit as st
 import streamlit.components.v1 as components
 
-# Esri World Imagery liefert in abgelegenen Gebieten (Karpaten) nur ~1 m
-# Aufloesung, das entspricht etwa Zoomstufe 17. Wird eine hoehere maxzoom
-# angegeben, fordert MapLibre Kacheln an, die dort nicht existieren - Esri
-# antwortet dann mit der Platzhalter-Kachel "Map data not yet available".
-# Mit korrekt gesetztem maxzoom skaliert MapLibre stattdessen die
-# vorhandenen Kacheln hoch (leicht unschaerfer, aber immer Bild).
+# In remote areas such as the Carpathians, Esri World Imagery only
+# provides about 1 m resolution, roughly zoom level 17. With a higher
+# maxzoom, MapLibre requests tiles that do not exist there and Esri
+# responds with the placeholder tile "Map data not yet available". With
+# maxzoom set correctly, MapLibre upscales the existing tiles instead:
+# slightly blurrier, but always an image.
 ESRI_NATIVE_MAXZOOM = 17
 
 _ESRI_IMAGERY_SOURCE = {
@@ -58,8 +57,8 @@ _ESRI_IMAGERY_SOURCE = {
     "attribution": "Luftbild: &copy; Esri, Maxar, Earthstar Geographics",
 }
 
-# Transparente Beschriftungs-/Grenzenebene, um im Satellitenbild die
-# Orientierung zu behalten (Ortsnamen, Verwaltungsgrenzen).
+# Transparent label and boundary layer, to keep orientation on satellite
+# imagery (place names, administrative boundaries).
 _ESRI_REFERENCE_SOURCE = {
     "type": "raster",
     "tiles": ["https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
@@ -91,18 +90,18 @@ BASEMAP_STYLES = {
     "Dark Matter": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
 }
 
-# Etwas ueber der nativen Aufloesung erlaubt, damit man noch nah heran kann -
-# aber nicht so weit, dass das Hochskalieren unbrauchbar unscharf wird.
+# Slightly above the native resolution, to allow closer zoom without the
+# upscaling becoming unusably blurry.
 MAP_MAX_ZOOM = 18.5
 
-# Kostenfreie Hoehendaten ohne API-Schluessel (Quelle des offiziellen
-# MapLibre-3D-Terrain-Beispiels).
+# Free elevation data without an API key (the source used by the
+# official MapLibre 3D terrain example).
 TERRAIN_TILEJSON = "https://tiles.mapterhorn.com/tilejson.json"
 
-# Farben der simulierten Realisierungen. Bewusst alle im Orangeton
-# gehalten (= "das Modell"), aber unterscheidbar hell/dunkel, damit man
-# eine einzelne Linie ueber die Animation hinweg verfolgen kann. Wird
-# zyklisch wiederverwendet, falls mehr Realisierungen geliefert werden.
+# Colours of the simulated realisations. All kept in the orange range,
+# which stands for "the model", but distinguishable in lightness so that
+# a single line can be followed through the animation. Reused cyclically
+# if more realisations are supplied.
 SIM_COLORS = ["#e8830c", "#a8541a", "#f5b942", "#c96a0f", "#8a4513"]
 
 
@@ -116,27 +115,28 @@ def render_animation_map(
     simulated: dict | None = None,
     basemap: str = "Satellit",
     bear_label: str = "",
-    dataset_label: str = "Carpathian Bears · GPS-Tracking (Rumänien)",
+    dataset_label: str = "Carpathian Bears - GPS tracking (Romania)",
     source_label: str = "",
     height: int = 900,
 ):
     """
     Args:
-        carpathian: {"points": GeoJSON, "paths": GeoJSON} - echte GPS-Route
-            EINES Baeren an EINEM Tag, volle Aufloesung.
-        alternatives: GeoJSON FeatureCollection der Alternativ-Kandidaten
-            (aus sync_simulation.build_synced_geojson()["alternative"]).
-        simulated: GeoJSON FeatureCollection der durchgehenden simulierten
-            Pfade (aus build_synced_geojson()["simulated"]). Die Punkte
-            tragen properties.realization (0..n-1) und dieselben
-            properties.timestamp wie die echte Route - dadurch laufen
-            echter und simulierte Baeren zwangslaeufig synchron.
-            None oder leer = nur der echte Baer wird animiert (Verhalten
-            wie vor der Erweiterung).
-        bear_label: z.B. "BÄR 7" - Kennzeichnung oben rechts im Panel.
-        dataset_label: welcher Datensatz gezeigt wird (fuer Forschende, die
-            die Karte ohne Vorwissen oeffnen).
-        source_label: woher die Daten kommen (z.B. "MariaDB (ursus)").
+        carpathian: {"points": GeoJSON, "paths": GeoJSON}, the real GPS
+            route of ONE bear on ONE day at full resolution.
+        alternatives: GeoJSON FeatureCollection of the candidate steps
+            (from sync_simulation.build_synced_geojson()["alternative"]).
+        simulated: GeoJSON FeatureCollection of the continuous simulated
+            paths (from build_synced_geojson()["simulated"]). The points
+            carry properties.realization (0..n-1) and the same
+            properties.timestamp as the real route, which forces the real
+            and simulated bears to move in step. None or empty means only
+            the real bear is animated.
+        bear_label: for example "BEAR 7", shown at the top right of the
+            panel.
+        dataset_label: which dataset is displayed, for readers opening the
+            map without prior knowledge.
+        source_label: where the data comes from, for example
+            "MariaDB (ursus)".
     """
     carpathian = carpathian or {}
     cp_points = carpathian.get("points", _empty_fc())
@@ -164,7 +164,7 @@ def render_animation_map(
         f.get("properties", {}).get("realization", 0)
         for f in sim_points.get("features", [])
     })
-    n_sims_label = f"{n_realizations} Läufe" if n_realizations else "–"
+    n_sims_label = f"{n_realizations} runs" if n_realizations else "-"
 
     html = f"""
 <!DOCTYPE html>
@@ -211,8 +211,8 @@ def render_animation_map(
     .ltext {{ font-size:11.5px; color:var(--ink-soft); }}
     .lcount {{ margin-left:auto; font-size:11px; color:var(--ink-faint); }}
     .hr {{ height:1px; background:var(--line); margin:12px 0 10px; }}
-    /* Hinweis, dass die simulierten Pfade Zufallsziehungen sind - bewusst
-       direkt unter der Legende und nicht nur in der Dokumentation. */
+    /* Note that the simulated paths are random draws, placed directly
+       below the legend rather than only in the documentation. */
     .sim-note {{
       margin-top:10px; padding:7px 9px; border-radius:7px;
       background:rgba(232,131,12,.09); border:1px solid rgba(232,131,12,.22);
@@ -310,7 +310,7 @@ def render_animation_map(
 
     <div class="status-panel glass">
       <div class="status-top">
-        <div class="status-title">Bewegungs-Animation</div>
+        <div class="status-title">Movement animation</div>
         <div class="status-tag mono">{bear_label}</div>
       </div>
       <div class="dataset">{dataset_label}</div>
@@ -319,36 +319,36 @@ def render_animation_map(
       <div class="legend">
         <div class="legend-row">
           <span class="ldot" style="background:var(--blue); box-shadow:0 0 0 3px rgba(29,111,184,.16)"></span>
-          <span class="ltext">Echte GPS-Route</span>
+          <span class="ltext">Real GPS route</span>
           <span class="lcount mono">{n_points_label}</span>
         </div>
         <div class="legend-row">
           <span class="ldot" style="background:var(--orange); box-shadow:0 0 0 3px rgba(232,131,12,.16)"></span>
-          <span class="ltext">Simulierte Bären</span>
+          <span class="ltext">Simulated bears</span>
           <span class="lcount mono">{n_sims_label}</span>
         </div>
         <div class="legend-row">
           <span class="ldot" style="background:var(--fan)"></span>
-          <span class="ltext">Alternativen (Fächer)</span>
+          <span class="ltext">Alternatives (fan)</span>
           <span class="lcount mono">{n_alts_label}</span>
         </div>
       </div>
 
       <div class="sim-note">
-        Die orangen Pfade sind je <b>eine mögliche Realisierung</b> des
-        Modells – keine Vorhersage. Ein erneuter Lauf ergibt andere Pfade;
-        aussagekräftig ist ihre Streuung, nicht die einzelne Linie.
+        Each orange path is <b>one possible realisation</b> of the model,
+        not a prediction. Another run yields different paths; the spread
+        between them is what matters, not any single line.
       </div>
 
       <div class="hr"></div>
-      <div class="section-label">Kartenstil</div>
+      <div class="section-label">Base map</div>
       <select id="basemap-select">{bm_options}</select>
 
-      <label class="switch-row"><input type="checkbox" id="toggle-3d" /> 3D-Gelände (Höhenmodell)</label>
-      <label class="switch-row"><input type="checkbox" id="toggle-fullpath" /> Gesamtpfad einblenden</label>
-      <label class="switch-row"><input type="checkbox" id="toggle-sim" checked /> Simulierte Bären</label>
-      <label class="switch-row"><input type="checkbox" id="toggle-fan" checked /> Alternativen-Fächer</label>
-      <div class="terrain-note" id="terrain-note">Höhendaten nicht erreichbar – Karte bleibt in 2D.</div>
+      <label class="switch-row"><input type="checkbox" id="toggle-3d" /> 3D terrain (elevation model)</label>
+      <label class="switch-row"><input type="checkbox" id="toggle-fullpath" /> Show full path</label>
+      <label class="switch-row"><input type="checkbox" id="toggle-sim" checked /> Simulated bears</label>
+      <label class="switch-row"><input type="checkbox" id="toggle-fan" checked /> Alternatives fan</label>
+      <div class="terrain-note" id="terrain-note">Elevation data unavailable; the map stays in 2D.</div>
     </div>
 
     <div class="control-bar glass">
@@ -365,16 +365,16 @@ def render_animation_map(
 
       <div class="controls-row">
         <div class="btn-cluster">
-          <button id="step-back" class="icon-btn" title="Ein Schritt zurück">
+          <button id="step-back" class="icon-btn" title="One step back">
             <svg width="13" height="13" viewBox="0 0 12 12"><rect x="1" y="1.5" width="1.8" height="9" fill="currentColor"></rect><polygon points="11,1.5 11,10.5 4,6" fill="currentColor"></polygon></svg>
           </button>
           <button id="play-btn" class="play-btn" title="Play/Pause">
             <svg id="play-icon" width="13" height="13" viewBox="0 0 12 12"><polygon points="2.5,1.2 11,6 2.5,10.8" fill="currentColor"></polygon></svg>
           </button>
-          <button id="step-fwd" class="icon-btn" title="Ein Schritt vor">
+          <button id="step-fwd" class="icon-btn" title="One step forward">
             <svg width="13" height="13" viewBox="0 0 12 12"><polygon points="1,1.5 1,10.5 8,6" fill="currentColor"></polygon><rect x="9.2" y="1.5" width="1.8" height="9" fill="currentColor"></rect></svg>
           </button>
-          <button id="reset-btn" class="icon-btn" title="Zurücksetzen" style="font-size:15px;">↺</button>
+          <button id="reset-btn" class="icon-btn" title="Reset" style="font-size:15px;">&#8634;</button>
         </div>
 
         <div class="divider"></div>
@@ -389,31 +389,31 @@ def render_animation_map(
         <div class="metrics">
           <div>
             <div class="metric-val" id="metric-dist">–</div>
-            <div class="metric-lbl">Strecke</div>
+            <div class="metric-lbl">Distance</div>
           </div>
           <div>
             <div class="metric-val" id="metric-speed">–</div>
-            <div class="metric-lbl">Tempo</div>
+            <div class="metric-lbl">Speed</div>
           </div>
-          <div title="Mittlerer Abstand zwischen dem echten Bären und den simulierten Bären zum aktuellen Zeitpunkt">
+          <div title="Mean distance between the real bear and the simulated bears at the current time">
             <div class="metric-val" id="metric-sep">–</div>
-            <div class="metric-lbl">Abstand ø</div>
+            <div class="metric-lbl">Mean gap</div>
           </div>
         </div>
 
         <div class="right-controls">
           <div class="speed-pills" id="speed-pills"></div>
           <button id="range-toggle" class="range-btn">
-            <span class="rdot"></span><span id="range-label">Gesamt</span>
+            <span class="rdot"></span><span id="range-label">Entire period</span>
           </button>
         </div>
       </div>
 
       <div class="range-popover" id="range-popover">
-        <div class="popover-title">Zeitraum</div>
-        <div class="section-label">Startzeitpunkt</div>
+        <div class="popover-title">Time range</div>
+        <div class="section-label">Start time</div>
         <input type="datetime-local" id="anim-start" />
-        <div class="section-label" style="margin-top:13px">Dauer</div>
+        <div class="section-label" style="margin-top:13px">Duration</div>
         <div class="duration-pills" id="duration-pills"></div>
         <div class="range-detail" id="range-detail">–</div>
       </div>
@@ -436,14 +436,14 @@ def render_animation_map(
     const map = new maplibregl.Map({{
       container:'map', style:STYLES["{basemap}"], center:[25.3,45.6], zoom:8,
       maxPitch:85, maxZoom:{MAP_MAX_ZOOM},
-      // Quellenangabe ist bei Esri-Luftbildern Pflicht (kompakt eingeklappt)
+      // Attribution is mandatory for Esri imagery, shown collapsed
       attributionControl:{{ compact:true }},
     }});
     map.addControl(new maplibregl.NavigationControl({{ visualizePitch:true }}), 'top-right');
     map.addControl(new maplibregl.ScaleControl({{ maxWidth:110, unit:'metric' }}), 'bottom-right');
 
     // -------------------------------------------------------
-    // Sources + Layer (werden nach jedem Kartenstil-Wechsel neu angelegt)
+    // Sources and layers, recreated after every base map change
     // -------------------------------------------------------
     function addSourcesAndLayers() {{
       const addSrc = (id, d) => {{ if (!map.getSource(id)) map.addSource(id, {{ type:'geojson', data:d }}); }};
@@ -457,40 +457,40 @@ def render_animation_map(
 
       if (!map.getSource('terrain-dem')) {{
         try {{ map.addSource('terrain-dem', {{ type:'raster-dem', url:TERRAIN_TILEJSON }}); }}
-        catch (e) {{ console.warn('Terrain-Quelle nicht verfuegbar:', e); }}
+        catch (e) {{ console.warn('Terrain source unavailable:', e); }}
       }}
 
       const addLayerSafe = (spec) => {{ if (!map.getLayer(spec.id)) map.addLayer(spec); }};
 
-      // Schummerung (nutzt dasselbe Hoehenmodell wie der 3D-Modus): macht
-      // Hangrichtung und Gelaendeform sichtbar, was im reinen Luftbild oft
-      // schwer zu erkennen ist. Wird zusammen mit 3D ein-/ausgeschaltet und
-      // liegt UNTER allen Datenebenen, damit Route und Faecher lesbar bleiben.
+      // Hillshading uses the same elevation model as the 3D mode and
+      // makes slope direction and landform visible, which is often hard
+      // to read on imagery alone. It is toggled together with 3D and sits
+      // BELOW all data layers so route and fan stay readable.
       if (map.getSource('terrain-dem')) {{
         addLayerSafe({{ id:'hillshade', type:'hillshade', source:'terrain-dem',
           layout:{{ visibility:'none' }},
           paint:{{ 'hillshade-exaggeration':0.45, 'hillshade-shadow-color':'#3b3226' }} }});
       }}
 
-      // Gesamtpfad: standardmaessig AUS (sonst ist das Ergebnis schon vor
-      // dem Abspielen sichtbar) - per Schalter einblendbar.
+      // Full path: off by default, otherwise the result would be visible
+      // before playback. Can be shown with the toggle.
       addLayerSafe({{ id:'cp-paths-static', type:'line', source:'cp_paths_static',
         layout:{{ visibility:'none' }},
         paint:{{ 'line-color':'#1d6fb8','line-width':2,'line-opacity':0.35,'line-dasharray':[2,2] }} }});
 
-      // Faecher jetzt neutral-grau statt orange: Orange kennzeichnet ab
-      // sofort die mitlaufenden simulierten Baeren, sonst waeren beide
-      // Darstellungen der Simulation nicht auseinanderzuhalten.
+      // The fan is neutral grey rather than orange: orange now marks the
+      // simulated bears moving along, and otherwise the two depictions of
+      // the simulation could not be told apart.
       addLayerSafe({{ id:'alt-fan-lines', type:'line', source:'alt-fan-lines',
         paint:{{ 'line-color':'#8a8680','line-width':1.1,'line-opacity':0.42,'line-dasharray':[1,1.5] }} }});
       addLayerSafe({{ id:'alt-fan', type:'circle', source:'alt-fan',
         paint:{{ 'circle-radius':4,'circle-color':'#8a8680','circle-opacity':0.65,
                  'circle-stroke-width':1,'circle-stroke-color':'#fff' }} }});
 
-      // Simulierte Baeren: liegen UNTER dem echten Baeren, damit die
-      // Referenz (blau) immer lesbar bleibt, auch wenn sich Pfade kreuzen.
-      // Farbe kommt pro Feature aus properties.color (eine Realisierung =
-      // eine Farbe), deshalb ein Layer fuer beliebig viele Laeufe.
+      // Simulated bears sit BELOW the real bear so the blue reference
+      // stays readable where paths cross. The colour comes per feature
+      // from properties.color (one realisation, one colour), so a single
+      // layer covers any number of runs.
       addLayerSafe({{ id:'sim-trail', type:'line', source:'sim-trail',
         paint:{{ 'line-color':['get','color'],'line-width':2.4,'line-opacity':0.85 }} }});
       addLayerSafe({{ id:'sim-marker-halo', type:'circle', source:'sim-marker',
@@ -513,8 +513,8 @@ def render_animation_map(
 
     function fitToData() {{
       const coords = [];
-      // Auch die simulierten Pfade einbeziehen - sie laufen bewusst von der
-      // echten Route weg und waeren sonst schnell ausserhalb des Bildes.
+      // Include the simulated paths as well: they deliberately move away
+      // from the real route and would otherwise leave the viewport.
       [DATA.cp_points, DATA.sim_points].forEach(fc => {{
         ((fc && fc.features) || []).forEach(f => {{
           const c = f.geometry && f.geometry.coordinates;
@@ -531,7 +531,7 @@ def render_animation_map(
     }}
 
     // -------------------------------------------------------
-    // Kartenstil / 3D / Gesamtpfad
+    // Base map style, 3D terrain and full path
     // -------------------------------------------------------
     const uiState = {{ terrain3d:false, fullPath:false, showSim:true, showFan:true }};
 
@@ -541,9 +541,9 @@ def render_animation_map(
       }}
     }}
 
-    // Simulierte Baeren und Faecher einzeln abschaltbar: beide gleichzeitig
-    // ergeben bei vielen Schritten ein unuebersichtliches Bild, und je nach
-    // Fragestellung interessiert nur eins von beidem.
+    // Simulated bears and the fan can be toggled separately: shown
+    // together over many steps the picture becomes cluttered, and
+    // depending on the question only one of the two is of interest.
     function applyLayerToggles() {{
       const set = (id, on) => {{
         if (map.getLayer(id)) map.setLayoutProperty(id,'visibility', on ? 'visible' : 'none');
@@ -568,7 +568,7 @@ def render_animation_map(
           map.easeTo({{ pitch:0, duration:500 }});
         }}
       }} catch (e) {{
-        console.warn('Terrain konnte nicht gesetzt werden:', e);
+        console.warn('Terrain could not be applied:', e);
         showTerrainNote();
       }}
     }}
@@ -581,7 +581,7 @@ def render_animation_map(
       uiState.terrain3d = false;
     }}
 
-    // Fehlende Hoehen-Kacheln melden, ohne die Karte zu blockieren
+    // Report missing elevation tiles without blocking the map
     map.on('error', (e) => {{
       const msg = (e && e.error && e.error.message) || '';
       if (uiState.terrain3d && /terrain|dem|mapterhorn/i.test(msg)) showTerrainNote();
@@ -620,21 +620,21 @@ def render_animation_map(
     }}
 
     // -------------------------------------------------------
-    // ANIMATIONS-ENGINE
+    // ANIMATION ENGINE
     // -------------------------------------------------------
     const SPEEDS = [1, 10, 60, 300, 1000];
-    const DURATIONS = [[0.25,'15 Min'],[0.5,'30 Min'],[1,'1 Std'],[4,'4 Std'],[24,'24 Std'],[-1,'Gesamt']];
+    const DURATIONS = [[0.25,'15 min'],[0.5,'30 min'],[1,'1 h'],[4,'4 h'],[24,'24 h'],[-1,'Entire period']];
 
     const animState = {{
       playing:false, speed:300, track:[], altFan:{{steps:[], bySteptime:{{}}}},
-      simTracks:[],   // je Realisierung ein {{color, points:[{{t,lng,lat}}]}}
+      simTracks:[],   // one {{color, points:[{{t,lng,lat}}]}} per realisation
       startTime:null, endTime:null, currentTime:null, durHours:-1,
       rafId:null, lastWallClock:null,
     }};
 
     function parseTime(v) {{ return v ? Date.parse(String(v).replace(' ','T')) : NaN; }}
 
-    // Haversine-Distanz in Metern - fuer Streckenmessung/Tempo-Anzeige
+    // Haversine distance in metres, used for distance and speed readouts
     function haversine(a, b) {{
       const R = 6371000, toRad = d => d * Math.PI / 180;
       const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
@@ -654,9 +654,9 @@ def render_animation_map(
       return points;
     }}
 
-    // Simulierte Punkte nach Realisierung gruppieren. Dieselbe Struktur wie
-    // der echte Track, damit interpolatePosition()/trailCoords() ohne
-    // Sonderfall auch fuer die simulierten Baeren funktionieren.
+    // Group simulated points by realisation. The structure matches the
+    // real track so that interpolatePosition() and trailCoords() work for
+    // the simulated bears without any special case.
     function buildSimTracks() {{
       const byRealization = {{}};
       (DATA.sim_points.features || []).forEach(f => {{
@@ -712,7 +712,7 @@ def render_animation_map(
       return chosen;
     }}
 
-    // Zurueckgelegte Strecke bis t (nur innerhalb des gewaehlten Zeitfensters)
+    // Distance covered up to t, within the selected time window only
     function distanceUntil(track, t) {{
       let total = 0, prev = null;
       for (const p of track) {{
@@ -726,7 +726,7 @@ def render_animation_map(
       return total;
     }}
 
-    // Momentangeschwindigkeit aus dem aktuell laufenden GPS-Schritt
+    // Instantaneous speed derived from the GPS step currently in progress
     function currentStepSpeedKmh(track, t) {{
       if (track.length < 2) return null;
       for (let i = 0; i < track.length - 1; i++) {{
@@ -751,9 +751,9 @@ def render_animation_map(
       const ms = map.getSource('anim-marker'); if (ms) ms.setData({{type:'FeatureCollection', features:markerFeatures}});
       const ts = map.getSource('anim-trail');  if (ts) ts.setData({{type:'FeatureCollection', features:trailFeatures}});
 
-      // Simulierte Baeren: exakt dieselbe Zeitlogik wie beim echten Baeren,
-      // nur eben N-mal. Die Farbe reist als Feature-Property mit, damit ein
-      // einziger Layer alle Realisierungen darstellen kann.
+      // Simulated bears use exactly the same time logic as the real
+      // bear, just N times over. The colour travels as a feature property
+      // so that a single layer can draw all realisations.
       const simMarkers = [], simTrails = [];
       let sumSep = 0, nSep = 0;
       animState.simTracks.forEach(st => {{
@@ -802,10 +802,10 @@ def render_animation_map(
         const kmh = currentStepSpeedKmh(animState.track, animState.currentTime);
         spdEl.textContent = kmh == null ? '–' : kmh.toFixed(2) + ' km/h';
       }}
-      // Wie weit ist das Modell im Moment von der Realitaet entfernt?
-      // Macht aus dem optischen Vergleich eine ablesbare Zahl - mit
-      // wachsender Zeit sollte der Abstand zunehmen, weil sich die
-      // Simulation von der echten Route loest (kein Nachfuehren!).
+      // How far is the model from reality at this moment? This turns the
+      // visual comparison into a readable number. The gap should grow
+      // over time because the simulation is never pulled back towards the
+      // real route.
       const sepEl = document.getElementById('metric-sep');
       if (sepEl) {{
         if (!nSep) sepEl.textContent = '–';
@@ -840,12 +840,12 @@ def render_animation_map(
       const rl = document.getElementById('range-label');
       if (rl) {{
         const d = DURATIONS.find(([v]) => v === animState.durHours);
-        rl.textContent = d ? d[1] : (animState.durHours + ' Std');
+        rl.textContent = d ? d[1] : (animState.durHours + ' h');
       }}
       const rd = document.getElementById('range-detail');
       if (rd) {{
         const inRange = animState.track.filter(p => p.t >= animState.startTime && p.t <= animState.endTime).length;
-        rd.textContent = inRange + ' GPS-Punkte im Zeitraum · ' + fmtClock(animState.startTime) + '–' + fmtClock(animState.endTime);
+        rd.textContent = inRange + ' GPS points in range, ' + fmtClock(animState.startTime) + '-' + fmtClock(animState.endTime);
       }}
     }}
 
@@ -941,7 +941,7 @@ def render_animation_map(
 
       const hint = document.getElementById('anim-hint');
       if (!animState.track.length) {{
-        if (hint) hint.textContent = 'Keine zeitgestempelten GPS-Daten geladen.';
+        if (hint) hint.textContent = 'No time-stamped GPS data loaded.';
         return false;
       }}
 
@@ -957,13 +957,13 @@ def render_animation_map(
       renderSpeedPills();
       renderDurationPills();
 
-      let hintText = animState.track.length + ' GPS-Punkte · ';
+      let hintText = animState.track.length + ' GPS points - ';
       hintText += animState.altFan.steps.length
-        ? ('Alternativen an ' + animState.altFan.steps.length + ' Schritten')
-        : 'keine Alternativen geladen';
+        ? ('alternatives at ' + animState.altFan.steps.length + ' steps')
+        : 'no alternatives loaded';
       hintText += animState.simTracks.length
-        ? (' · ' + animState.simTracks.length + ' simulierte Realisierungen')
-        : ' · keine simulierten Pfade';
+        ? (' - ' + animState.simTracks.length + ' simulated realisations')
+        : ' - no simulated paths';
       if (hint) hint.textContent = hintText;
       return true;
     }}

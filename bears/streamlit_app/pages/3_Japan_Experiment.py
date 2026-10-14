@@ -1,22 +1,22 @@
 """
 pages/3_Japan_Experiment.py
 =============================
-Japan-Experiment (Version 2): EINE Kamera waehlen, N simulierte Baeren
-starten dort GENAU an einem echten Foto-Ereignis (Ort + Zeit) und bewegen
-sich animiert nach dem rumaenischen Modell (Geschwindigkeit, optionale
-Gelaendegewichtung, Richtungstraegheit). Echte Fotozeiten AN DIESER KAMERA
-werden zusaetzlich als rote Striche auf derselben Zeitleiste markiert -
-direkter visueller Vergleich, keine Statistik-Kenntnis noetig, um die
-Kernfrage des Protokolls zu verstehen ("kommen simulierte Baeren zu
-aehnlichen Zeiten wie echte Sichtungen?").
+Japan experiment: one camera is selected, N simulated bears start there
+at an actual photo event (place and time) and move according to the
+Carpathian model (speed, optional terrain weighting, directional
+persistence). Real photo times AT THAT CAMERA are marked as red ticks on
+the same timeline, giving a direct visual comparison that requires no
+statistical background to read: do simulated bears arrive at times
+similar to the real sightings?
 
-Kein "Gesamt"-Zeitfenster (anders als bei Carpathian): die Simulation hat
-kein natuerliches Ende, nur feste Fenster 15 Min bis 72 Std.
+There is no "entire period" window as in the Carpathian animation: the
+simulation has no natural end, only fixed windows from 15 minutes to
+72 hours.
 
-Die fruehere Monte-Carlo-Statistik (Δ, Bootstrap ueber ALLE Kameras/Laeufe,
-siehe activity_overlap.py) bleibt bestehen, ruetscht aber zur VERTIEFENDEN
-Analyse unten (eingeklappt) - die Animation oben ist jetzt die Hauptsache,
-weil sie die Fragestellung direkt und ohne Vorwissen beantwortet.
+The Monte Carlo statistic (overlap coefficient with bootstrap confidence
+interval over ALL cameras and runs, see activity_overlap.py) is kept but
+moved into a collapsed section below. The animation answers the question
+directly and without prior knowledge, so it comes first.
 """
 
 import streamlit as st
@@ -25,7 +25,6 @@ from datetime import datetime
 
 import activity_overlap as ao
 import japan_map_component as jm
-from geojson_table_helper import geojson_to_dataframe
 from japan_comparison import (
     load_japan_cameras, get_real_events_for_camera, simulate_multiple_bears_from_sighting,
     get_photo_counts_by_camera, DatabaseConnection, BearSpeeds, SIM_DB_PATH,
@@ -34,15 +33,15 @@ from wildlife_db_mariadb import WildlifeDatabase
 
 st.set_page_config(page_title="Japan-Experiment", layout="wide")
 
-st.title("Japan-Experiment: simulierte Bären vs. echte Kameras")
+st.title("Japan experiment: simulated bears versus real cameras")
 st.caption(
-    "Eine Kamera wählen - mehrere simulierte Bären starten genau an einem echten "
-    "Foto-Ereignis (Ort + Zeit) und bewegen sich nach dem rumänischen Modell. "
-    "Rote Striche auf der Zeitleiste zeigen, wann an dieser Kamera tatsächlich fotografiert wurde."
+    "Select a camera: several simulated bears start at an actual photo event "
+    "(place and time) and move according to the Carpathian model. Red ticks on "
+    "the timeline show when a photograph was actually taken at that camera."
 )
 
-# Erklaerung bewusst auf ENGLISCH - siehe gleichlautende Begruendung in
-# pages/2_Experimente.py.
+# Introductory section shown above the map, aimed at readers who open
+# the page without prior knowledge of the project.
 with st.expander("What am I looking at?  ·  About this experiment", expanded=False):
     st.markdown("""
 **The idea.** Movement patterns learned from GPS-collared brown bears in the
@@ -107,15 +106,36 @@ def _check_db():
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _get_real_events(device_id: str):
-    db = WildlifeDatabase()
-    return get_real_events_for_camera(db, device_id)
+    """
+    Real photo timestamps for one camera.
+
+    Returns (events, error). The database call is wrapped because the
+    reachability flag from _check_db() is cached for ten minutes: the VPN
+    can drop within that window, in which case the flag still says
+    "reachable" while the query already fails. Without this guard the
+    exception propagates and takes the whole page down, even though the
+    simulation itself does not need the database at all.
+    """
+    try:
+        return get_real_events_for_camera(WildlifeDatabase(), device_id), ""
+    except Exception as e:
+        return [], f"{type(e).__name__}: {e}"
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _get_photo_counts():
-    """Fotozahlen aller Kameras fuer die anklickbaren Kartenpunkte -
-    eine einzige Abfrage, gecacht (siehe get_photo_counts_by_camera)."""
-    return get_photo_counts_by_camera(WildlifeDatabase())
+    """
+    Photo counts for all cameras, used by the clickable camera markers.
+    One single query, cached (see get_photo_counts_by_camera).
+
+    Returns None when the database cannot be reached, which the map
+    renders as "unknown" rather than as "no photographs".
+    """
+    try:
+        return get_photo_counts_by_camera(WildlifeDatabase())
+    except Exception as e:
+        print(f"[3_Japan_Experiment] Photo counts not retrievable: {e}")
+        return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -123,13 +143,13 @@ def _simulate(device_id: str, lat: float, lng: float, start_time_iso: str,
               n_bears: int, hours: int, use_terrain: bool, seed: int):
     """
     Returns:
-        (bears, terrain_warning) - terrain_warning ist "" im Normalfall bzw.
-        der Grund, warum ohne Gelaendegewichtung gerechnet wurde.
+        (bears, terrain_warning). terrain_warning is "" in the normal case, otherwise
+        the reason why the run proceeded without terrain weighting.
 
-    Die Gelaendegewichtung ist ein Komfortmerkmal: laesst sich der Cache
-    nicht oeffnen (beschaedigte oder ueberschriebene terrain_cache.db),
-    wird OHNE Gewichtung weitergerechnet statt die Seite abstuerzen zu
-    lassen. Der Grund wird nach oben gereicht und dort angezeigt.
+    Terrain weighting is a convenience feature: if the cache cannot be
+    opened, for example because terrain_cache.db is damaged or
+    overwritten, the run continues WITHOUT weighting instead of letting
+    the page crash. The reason is passed upwards and displayed there.
     """
     dbcon = DatabaseConnection(SIM_DB_PATH)
     bear_speeds = BearSpeeds(dbcon)
@@ -145,8 +165,8 @@ def _simulate(device_id: str, lat: float, lng: float, start_time_iso: str,
                 terrain_cache = None
         except Exception as e:
             terrain_warning = (
-                f"Gelaende-Cache konnte nicht geoeffnet werden ({type(e).__name__}: {e}). "
-                "Simulation laeuft ohne Gelaendegewichtung."
+                f"Terrain cache could not be opened ({type(e).__name__}: {e}). "
+                "The simulation runs without terrain weighting."
             )
             terrain_cache = None
 
@@ -160,8 +180,8 @@ def _simulate(device_id: str, lat: float, lng: float, start_time_iso: str,
 
 
 DURATION_OPTIONS = [
-    (0.25, "15 Min"), (0.5, "30 Min"), (1, "1 Std"),
-    (4, "4 Std"), (24, "24 Std"), (72, "72 Std"),
+    (0.25, "15 min"), (0.5, "30 min"), (1, "1 h"),
+    (4, "4 h"), (24, "24 h"), (72, "72 h"),
 ]
 
 cameras = _load_cameras()
@@ -171,17 +191,17 @@ db_ok = _check_db()
 # Sidebar
 # ============================================================
 with st.sidebar:
-    st.header("Auswahl")
+    st.header("Selection")
 
     if not db_ok:
         st.warning(
-            "MariaDB nicht erreichbar (VPN aktiv?). Simulation funktioniert trotzdem "
-            "(Kamerastandorte kommen aus einer lokalen Datei), aber ohne VPN gibt es "
-            "keine echten Fotozeiten zum Vergleich."
+            "MariaDB not reachable (is the VPN active?). The simulation still works, "
+            "because the camera locations come from a local file, but without the VPN "
+            "there are no real photo times to compare against."
         )
 
     if not cameras:
-        st.error("Keine Kamerastandorte gefunden (2024Bear/ReadMe.csv im bear_simulation-Ordner?).")
+        st.error("No camera locations found. Is 2024Bear/ReadMe.csv present in the bear_simulation folder?")
     else:
         cam_labels = {c["device_id"]: f"Kamera {c['device_id']}" for c in cameras}
         selected_cam_id = st.selectbox(
@@ -189,48 +209,58 @@ with st.sidebar:
         )
         selected_camera = next(c for c in cameras if c["device_id"] == selected_cam_id)
 
-        real_events = _get_real_events(selected_cam_id) if db_ok else []
-        if db_ok:
-            st.caption(f"{len(real_events)} echte Foto(s) an dieser Kamera bekannt.")
+        real_events, events_error = _get_real_events(selected_cam_id) if db_ok else ([], "")
+        if events_error:
+            # Reachability flag was stale (see _get_real_events): report it
+            # and continue without real events instead of failing the page.
+            db_ok = False
+            st.warning(
+                "Database currently not reachable (is the VPN active?). The "
+                "simulation continues, but no real photo times are shown. "
+                f"Details: {events_error}"
+            )
+        elif db_ok:
+            st.caption(f"{len(real_events)} real photograph(s) known at this camera.")
 
         with st.form("japan_exp_form"):
             if real_events:
                 event_labels = [t.strftime("%d.%m.%Y %H:%M") for t in real_events]
                 sel_event_idx = st.selectbox(
-                    "Startzeitpunkt (echtes Foto-Ereignis)",
+                    "Start time (actual photo event)",
                     options=range(len(real_events)), format_func=lambda i: event_labels[i],
                     index=len(real_events) - 1,
-                    help="Die Bären starten genau zu dieser echten Sichtung - Ort und Zeit.",
+                    help="The bears start exactly at this real sighting, in place and time.",
                 )
                 start_time = real_events[sel_event_idx]
             else:
                 st.info(
-                    "Keine echten Fotos an dieser Kamera bekannt (oder keine DB-Verbindung) - "
-                    "Startzeit muss frei gewählt werden, kein Realitätsabgleich möglich."
+                    "No real photographs known at this camera, or no database "
+                    "connection. The start time has to be chosen freely and no "
+                    "comparison against reality is possible."
                 )
-                start_date = st.date_input("Startdatum", value=datetime(2024, 6, 1).date())
-                start_hour = st.slider("Startuhrzeit", 0, 23, 20)
+                start_date = st.date_input("Start date", value=datetime(2024, 6, 1).date())
+                start_hour = st.slider("Start hour", 0, 23, 20)
                 start_time = datetime.combine(start_date, datetime.min.time()).replace(hour=start_hour)
 
-            n_bears = st.slider("Anzahl simulierter Bären", 1, 20, 6)
+            n_bears = st.slider("Number of simulated bears", 1, 20, 6)
 
             dur_label = st.select_slider(
-                "Zeitfenster", options=[label for _, label in DURATION_OPTIONS], value="24 Std",
-                help="Kein 'Gesamt' möglich - die Simulation hat kein natürliches Ende.",
+                "Time window", options=[label for _, label in DURATION_OPTIONS], value="24 h",
+                help="No 'entire period' option: the simulation has no natural end.",
             )
             hours = next(v for v, label in DURATION_OPTIONS if label == dur_label)
 
-            detection_radius_m = st.slider("Erfassungsradius der Kameras (m)", 50, 300, 100, step=25)
+            detection_radius_m = st.slider("Camera detection radius (m)", 50, 300, 100, step=25)
 
             use_terrain = st.checkbox(
-                "Geländegewichtung (Wald bevorzugt)", value=False,
-                help="Nutzt OpenStreetMap-Geländedaten, damit Bären eher durch Wald statt Dörfer "
-                     "laufen. Braucht Internetzugriff auf Overpass - kann den ersten Lauf an einem "
-                     "neuen Ort spürbar verlangsamen.",
+                "Terrain weighting (prefer forest)", value=False,
+                help="Uses OpenStreetMap terrain data so that bears tend to move through "
+                     "forest rather than villages. Requires internet access to Overpass "
+                     "and can noticeably slow down the first run in a new area.",
             )
-            seed = st.number_input("Zufalls-Seed", min_value=0, max_value=999999, value=42)
+            seed = st.number_input("Random seed", min_value=0, max_value=999999, value=42)
 
-            submitted = st.form_submit_button("Simulieren", type="primary")
+            submitted = st.form_submit_button("Simulate", type="primary")
 
         if submitted:
             st.session_state["japan_exp2_params"] = (
@@ -241,22 +271,22 @@ with st.sidebar:
 
     st.markdown("---")
     st.caption(
-        "Rote Striche auf der Zeitleiste = echte Fotozeiten an der gewählten Kamera. "
-        "Kameras auf der Karte leuchten auf, sobald ein simulierter Bär in Reichweite kommt."
+        "Red ticks on the timeline mark real photo times at the selected camera. "
+        "Cameras on the map light up as soon as a simulated bear comes within range."
     )
 
 # ============================================================
-# Hauptbereich: Animation
+# Main area: animation
 # ============================================================
 if "japan_exp2_params" not in st.session_state:
-    st.info("Links Kamera, Startzeitpunkt und Anzahl Bären wählen, dann **Simulieren** klicken.")
+    st.info("Select camera, start time and number of bears in the sidebar, then press **Simulate**.")
 else:
     (cam_id, lat, lng, start_time_iso, n_bears, hours,
      use_terrain, seed) = st.session_state["japan_exp2_params"]
     real_events = st.session_state.get("japan_exp2_real_events", [])
     start_camera = {"device_id": cam_id, "lat": lat, "lng": lng}
 
-    with st.spinner(f"Simuliere {n_bears} Bären ab Kamera {cam_id}..."):
+    with st.spinner(f"Simulating {n_bears} bears from camera {cam_id}..."):
         bears, terrain_warning = _simulate(
             cam_id, lat, lng, start_time_iso, n_bears, hours, use_terrain, seed
         )
@@ -266,64 +296,66 @@ else:
 
     jm.render_japan_map(
         cameras=cameras, start_camera=start_camera, bears=bears,
-        # None (nicht {}) bei fehlender DB - siehe render_japan_map():
-        # {} hiesse "erreichbar, aber ueberall null Fotos".
+        # None rather than {} when the database is unavailable; see
+        # render_japan_map(). {} would mean "reachable, but zero
+        # photographs everywhere".
         real_events=real_events, photo_counts=_get_photo_counts() if db_ok else None,
         height=850,
     )
 
-    st.markdown("### Daten zur aktuellen Ansicht")
-    _tabs = st.tabs(["Kamerastandorte", "Echte Fotozeiten (Startkamera)", "Simulierte Bärenpfade"])
+    st.markdown("### Data behind the current view")
+    _tabs = st.tabs(["Camera locations", "Real photo times (start camera)", "Simulated bear paths"])
 
     with _tabs[0]:
         df_cam = pd.DataFrame(cameras)
-        st.caption(f"{len(df_cam)} Kamerastandorte aus 2024Bear/ReadMe.csv")
+        st.caption(f"{len(df_cam)} camera locations from 2024Bear/ReadMe.csv")
         st.dataframe(df_cam, width="stretch")
 
     with _tabs[1]:
         if real_events:
-            df_events = pd.DataFrame({"zeitstempel": real_events})
-            st.caption(f"{len(df_events)} echte Fotos an Kamera {cam_id}")
+            df_events = pd.DataFrame({"timestamp": real_events})
+            st.caption(f"{len(df_events)} real photographs at camera {cam_id}")
             st.dataframe(df_events, width="stretch")
         else:
-            st.info("Keine echten Fotos bekannt (oder keine DB-Verbindung).")
+            st.info("No real photographs known, or no database connection.")
 
     with _tabs[2]:
         rows = []
         for b in bears:
             for p in b["path"]:
                 rows.append({
-                    "bär": f"Bär {b['bear_index'] + 1}", "geschlecht": b["gender"],
-                    "alter": b["age"], "saison": b["season"],
-                    "zeit": p["time"], "lat": p["lat"], "lng": p["lng"],
+                    "bear": f"Bear {b['bear_index'] + 1}", "sex": b["gender"],
+                    "age": b["age"], "season": b["season"],
+                    "time": p["time"], "lat": p["lat"], "lng": p["lng"],
                 })
         df_bears = pd.DataFrame(rows)
-        st.caption(f"{len(df_bears)} simulierte Positionen über {len(bears)} Bären")
+        st.caption(f"{len(df_bears)} simulated positions across {len(bears)} bears")
         st.dataframe(df_bears, width="stretch")
 
     # ============================================================
-    # Vertiefende Analyse (eingeklappt, sekundär - siehe Docstring)
+    # Deeper analysis, collapsed and secondary (see module docstring)
     # ============================================================
-    with st.expander("Vertiefende Analyse: statistischer Vergleich über alle Kameras"):
+    with st.expander("Deeper analysis: statistical comparison across all cameras"):
         st.caption(
-            "Ergänzt die Animation oben um einen strengeren, aggregierten Vergleich: "
-            "viele simulierte Läufe über ALLE Kameras hinweg, gegen alle echten Detektionen, "
-            "als eine Kennzahl mit Unsicherheitsbereich (Δ, Bootstrap)."
+            "Complements the animation above with a stricter, aggregated comparison: "
+            "many simulated runs across ALL cameras against all real detections, "
+            "reduced to one figure with an uncertainty range (overlap coefficient "
+            "with a bootstrap confidence interval)."
         )
-        n_runs = st.slider("Anzahl Simulationsläufe (für die Statistik)", 50, 500, 150, step=50)
+        n_runs = st.slider("Number of simulation runs (for the statistic)", 50, 500, 150, step=50)
 
-        with st.spinner(f"Berechne Statistik über {n_runs} Läufe..."):
+        with st.spinner(f"Computing the statistic over {n_runs} runs..."):
             stat_result = ao.compute_comparison(n_runs=n_runs, hours_per_run=48, seed=seed)
 
         if not stat_result["db_ok"]:
-            st.info("MariaDB nicht erreichbar - kein statistischer Vergleich möglich.")
+            st.info("MariaDB not reachable; no statistical comparison possible.")
         elif stat_result["delta"] is None:
-            st.warning("Zu wenig Daten für einen statistischen Vergleich.")
+            st.warning("Not enough data for a statistical comparison.")
         else:
             col1, col2, col3 = st.columns(3)
-            col1.metric("Überlappungskoeffizient Δ", f"{stat_result['delta']:.2f}")
-            col2.metric("95%-Konfidenzintervall", f"[{stat_result['ci_low']:.2f}, {stat_result['ci_high']:.2f}]")
-            col3.metric("Echte / simulierte Detektionen", f"{stat_result['n_real']} / {stat_result['n_sim']}")
+            col1.metric("Overlap coefficient", f"{stat_result['delta']:.2f}")
+            col2.metric("95 % confidence interval", f"[{stat_result['ci_low']:.2f}, {stat_result['ci_high']:.2f}]")
+            col3.metric("Real / simulated detections", f"{stat_result['n_real']} / {stat_result['n_sim']}")
 
             fig1 = ao.build_activity_overlap_figure(
                 stat_result["grid"], stat_result["f_real"], stat_result["f_sim"], stat_result["delta"],

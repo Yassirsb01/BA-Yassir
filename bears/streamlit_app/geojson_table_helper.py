@@ -1,13 +1,11 @@
 """
 geojson_table_helper.py
 =========================
-Kleine, wiederverwendbare Hilfsfunktion: wandelt eine GeoJSON-
-FeatureCollection in eine flache pandas-Tabelle um (properties + lat/lng-
-Spalten). Wird auf allen drei Karten-Seiten genutzt (Hauptkarte,
-Experimente, Japan-Experiment), damit unter jeder Kartenvisualisierung
-eine Tabelle der zugrundeliegenden Daten steht - zum Nachvollziehen, was
-tatsaechlich auf der Karte zu sehen ist, direkt aus derselben Quelle wie
-die Kartendarstellung (keine zweite, potenziell abweichende Abfrage).
+Small reusable helper that converts a GeoJSON FeatureCollection into a flat
+pandas table (properties plus lat/lng columns). Used by all three map pages
+(main map, Experiments, Japan experiment) so that every map visualisation is
+accompanied by a table of the underlying data. The table is built from the
+same object that feeds the map, so it cannot diverge from what is displayed.
 """
 
 import pandas as pd
@@ -15,10 +13,15 @@ import pandas as pd
 
 def geojson_to_dataframe(fc: dict) -> pd.DataFrame:
     """
-    Point-Features -> eine Zeile mit lat/lng-Spalten direkt aus der Geometrie.
-    LineString-Features -> eine Zeile mit Start-/Endpunkt + Anzahl Stuetzpunkte
-    (einzelne Koordinaten waeren in einer Tabellenzeile unlesbar).
-    Polygon/MultiPolygon -> nur der Geometrietyp, aus demselben Grund.
+    Point features become one row with lat/lng columns taken directly from
+    the geometry.
+
+    LineString features become one row with start and end point plus the
+    number of vertices; listing every coordinate would make the table row
+    unreadable.
+
+    Polygon and MultiPolygon features contribute only their geometry type,
+    for the same reason.
     """
     if not fc or not fc.get("features"):
         return pd.DataFrame()
@@ -34,12 +37,12 @@ def geojson_to_dataframe(fc: dict) -> pd.DataFrame:
             props["lng"] = coords[0]
             props["lat"] = coords[1]
         elif gtype == "LineString" and coords:
-            props["anzahl_punkte"] = len(coords)
+            props["point_count"] = len(coords)
             if coords:
                 props["start_lng"], props["start_lat"] = coords[0]
                 props["end_lng"], props["end_lat"] = coords[-1]
         elif gtype in ("Polygon", "MultiPolygon"):
-            props["geometrie_typ"] = gtype
+            props["geometry_type"] = gtype
 
         rows.append(props)
 

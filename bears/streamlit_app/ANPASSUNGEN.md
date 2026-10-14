@@ -1,17 +1,16 @@
 # Anpassungen an Fabian Bräus Bewegungssimulation
 
-Dokumentiert alle Abweichungen vom Originalcode aus `bear_simulation/`
-(Bachelorarbeit Fabian Bräu). Grundlage: Prof. Dünnweber hat im Meeting am
-21.08.2026 ausdrücklich erlaubt, Fabians Code anzupassen statt ihn 1:1 zu
-übernehmen — Ziel ist die Umsetzung seiner Anforderungen, nicht die
-originalgetreue Wiederverwendung.
+Dokumentiert alle Abweichungen vom Originalcode aus `bear_simulation/`,
+der Bewegungssimulation von Fabian Bräu. Die Anpassung ist abgestimmt; Ziel
+ist die Umsetzung der fachlichen Anforderungen, nicht die originalgetreue
+Wiederverwendung.
 
-**Fabians Originaldateien sind unverändert.** Angefasst wurden nur eigene
-Dateien: `sync_simulation.py`, `japan_comparison.py` und
-`bear_simulation/__init__.py`. Letztere liegt zwar in seinem Ordner, ist
-aber die selbst geschriebene Integrationsschicht zu `map.py` (sie
-importiert Streamlit) und nicht Teil seiner Arbeit. Alle drei
-implementieren seine Logik neu bzw. erweitern sie.
+**Die Originaldateien der Vorarbeit sind unverändert.** Angefasst wurden
+ausschließlich eigene Dateien: `sync_simulation.py`, `japan_comparison.py`
+und `bear_simulation/__init__.py`. Letztere liegt zwar im selben Ordner,
+ist aber die selbst geschriebene Integrationsschicht zu `map.py` — sie
+importiert Streamlit und gehört nicht zur Vorarbeit. Alle drei
+implementieren die ursprüngliche Logik neu oder erweitern sie.
 
 ---
 
@@ -71,8 +70,8 @@ eine Korrektur, keine Verhaltensänderung im Modell.
 **Original:** globales `random`-Modul, also bei jedem Aufruf ein anderes
 Ergebnis.
 
-**Grund:** Ohne festen Seed lässt sich eine Abbildung in der Bachelorarbeit
-nicht reproduzieren. `seed=None` erhält das alte Verhalten.
+**Grund:** Ohne festen Seed lässt sich eine einmal erzeugte Abbildung nicht
+reproduzieren. `seed=None` erhält das alte Verhalten.
 
 **Auswirkung:** keine inhaltliche — nur Reproduzierbarkeit.
 
@@ -82,10 +81,11 @@ nicht reproduzieren. `seed=None` erhält das alte Verhalten.
 
 **Wo:** `sync_simulation._build_simulated_realizations()`
 
-**Im Original nicht vorhanden.** Fabians Modell erzeugt pro echtem Schritt
-eine Menge von Kandidaten — das ist der Möglichkeitsraum *eines* Schritts,
-aber kein Pfad. Die Protokoll-Anforderung ("Bewegungen echter **und**
-simulierter Bären") braucht einen zweiten Bären, der mitläuft.
+**Im Original nicht vorhanden.** Das ursprüngliche Modell erzeugt pro
+echtem Schritt eine Menge von Kandidaten — das ist der Möglichkeitsraum
+*eines* Schritts, aber kein Pfad. Die Anforderung, Bewegungen echter **und**
+simulierter Bären nebeneinander zu zeigen, braucht einen zweiten Bären, der
+mitläuft.
 
 **Vorgehen:** Der simulierte Bär startet auf dem echten Startpunkt. Für jeden
 echten Schritt wird aus den Kandidaten dieses Schritts einer gezogen; dessen
@@ -176,8 +176,8 @@ empirische Ableitung und sollte in der Arbeit als Limitation genannt werden.
 
 **Wo:** `sync_simulation._build_simulated_realizations()`
 
-Fehlt für eine Stunde/Demografie ein Eintrag in `bear_speeds`, erzeugt
-Fabians Code für diesen Schritt keine Kandidaten. Die Realisierung hält dann
+Fehlt für eine Stunde oder Demografie ein Eintrag in `bear_speeds`, erzeugt
+der ursprüngliche Code für diesen Schritt keine Kandidaten. Die Realisierung hält dann
 die Position und setzt trotzdem einen Punkt auf den nächsten Zeitstempel,
 damit die Zeitachse lückenlos zur echten Route passt. Die Anzahl solcher
 Schritte wird als Warnung ausgegeben — sonst sähe ein Stillstand wie ein
@@ -400,4 +400,69 @@ von-Mises-κ aus `sync_simulation` (siehe Punkt 5). Das ist Absicht: um den
 Effekt der neuen Richtungswahl sauber zu messen, darf sich nur eine Sache
 ändern. Die Umstellung bleibt als offener Punkt bestehen.
 
-Reproduzierbar mit `python test_richtungsverteilung.py`.
+Reproduzierbar mit `python tests/direction_distribution_test.py`.
+
+---
+
+## 9. Δ neu berechnet, und warum das Prefetch-Gebiet zu klein ist
+
+**Wo:** `activity_overlap.py` (Ergebnis + Kodierungsfix im `__main__`-Block)
+
+### Neuer Wert
+
+Nach allen Änderungen an der Richtungswahl (Punkt 8) wurde der
+Überlappungskoeffizient am 02.10.2026 neu gerechnet:
+
+| | alt (Handout, Erklärung.txt) | neu |
+|---|---|---|
+| Δ | 0,63 | **0,615** |
+| 95 %-Bootstrap-KI | [0,55; 0,69] | **[0,528; 0,683]** |
+| echte Detektionen | 52 | 50 |
+| virtuelle Detektionen | — | 1 958 |
+| Konfiguration | — | 300 Läufe × 48 h, Erfassungsradius 150 m, **ohne Geländegewichtung** |
+
+Laufzeit 98 Sekunden. Der Zusatz „ohne Geländegewichtung" gehört zwingend zur
+Zahl, sonst ist sie nicht reproduzierbar.
+
+**Die Änderungen aus Punkt 8 betreffen diesen Wert fast nicht.**
+`compute_comparison()` und `run_full_analysis()` haben `use_terrain=False` als
+Standard, und die Streamlit-Seite ruft sie ohne dieses Argument auf. Die
+gesamte cluster-basierte Richtungswahl steht innerhalb von
+`if terrain_cache is not None` und wird in diesem Pfad also nie ausgeführt.
+Wirksam ist hier allein die Verbreiterung der Kandidatenstreuung von ±15° auf
+±22,5°. Entsprechend klein ist die Verschiebung: 0,63 → 0,615 liegt tief im
+alten Konfidenzintervall, die inhaltliche Aussage („etwas mehr als die Hälfte
+Überlappung") bleibt unverändert. Der frühere Wert war ungenau, nicht falsch.
+
+### Δ mit Geländegewichtung: derzeit nicht berechenbar
+
+Der Versuch mit `use_terrain=True` lieferte 0,626 — **dieser Wert ist
+unbrauchbar und darf nicht zitiert werden.** Während des Laufs schlugen
+Overpass-Abfragen fehl, woraufhin der Circuit Breaker in `terrain_cache.py`
+die Geländegewichtung **mitten im Lauf** abschaltete. Das Ergebnis ist damit
+eine Mischung aus Läufen mit und ohne Gelände.
+
+Ursache: Das mit `tools/prefetch_terrain.py` vorberechnete Gebiet reicht von
+Breite 37,416 bis 37,6035 und Länge 139,74 bis 140,0205. Die fehlgeschlagenen
+Abfragen lagen bei 37,4148 und 139,78 — also knapp **südlich** der unteren
+Gebietsgrenze. Bei 48-Stunden-Läufen verlassen die simulierten Bären das
+vorberechnete Gebiet; der Puffer von 5 km war an 24-Stunden-Läufen bemessen.
+
+Konsequenzen:
+
+1. Für eine belastbare Δ-Zahl **mit** Gelände muss das Prefetch-Gebiet
+   vergrößert werden (`tools/prefetch_terrain.py --buffer-km`, braucht einen Moment
+   mit erreichbarem Overpass). Steht noch aus.
+2. Dass der Circuit Breaker still abschaltet, ist für den interaktiven Betrieb
+   richtig (die Karte soll nicht hängen), für eine Messung aber gefährlich: das
+   Ergebnis wirkt gültig, ist es aber nicht. Für Messläufe sollte die
+   Abschaltung zu einem harten Fehler führen statt zu einer Warnung.
+
+### Nebenbei behobener Fehler
+
+`python activity_overlap.py` stürzte auf Windows mit einem
+`UnicodeEncodeError` ab — die Konsole nutzt cp1252 und kann weder das
+Δ-Zeichen noch Umlaute ausgeben. Der Absturz kam **nach** der vollständigen
+Monte-Carlo-Rechnung, bei der Ergebnisausgabe; der Rechenlauf war also jedes
+Mal verloren. Behoben durch `sys.stdout.reconfigure(encoding="utf-8",
+errors="replace")` im `__main__`-Block.

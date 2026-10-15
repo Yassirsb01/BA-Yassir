@@ -428,15 +428,15 @@ class JapanDeterrentSystem:
     def display_device_images_in_sidebar(self):
         st.sidebar.header("Japan Deterrent Images")
 
-        #Refresh Button
+        # Refresh button
         if st.sidebar.button("Refresh Devices", use_container_width=True, type="primary"):
-            # Cache leeren
+            # Clear the cache
             st.cache_data.clear()
             st.cache_resource.clear()
-            # Seite neu laden
+            # Reload the page
             st.rerun()
         
-        st.sidebar.markdown("---")  # Trennlinie
+        st.sidebar.markdown("---")  # separator
 
         device_ids = []
         if self.deterrent_data is not None and not self.deterrent_data.empty:

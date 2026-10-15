@@ -20,7 +20,7 @@ import streamlit.components.v1 as components
 # other styles remain selectable.
 DEFAULT_BASEMAP = "Esri Satellite"
 
-BASEMAP_NAMES = ["Esri Satellite", "Esri Satellite + Beschriftung",
+BASEMAP_NAMES = ["Esri Satellite", "Esri Satellite + labels",
                  "Liberty", "Bright", "Positron", "Dark", "OSM Raster"]
 
 # Free elevation data without an API key (the source used by the official
@@ -61,17 +61,17 @@ def _build_styles():
                 "type": "raster",
                 "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
                 "tileSize": 256, "maxzoom": 17,
-                "attribution": "Luftbild (c) Esri, Maxar, Earthstar Geographics"}},
+                "attribution": "Satellite imagery (c) Esri, Maxar, Earthstar Geographics"}},
             "layers": [{"id": "esri", "type": "raster", "source": "esri"}],
         },
-        "Esri Satellite + Beschriftung": {
+        "Esri Satellite + labels": {
             "version": 8,
             "sources": {
                 "esri": {
                     "type": "raster",
                     "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
                     "tileSize": 256, "maxzoom": 17,
-                    "attribution": "Luftbild (c) Esri, Maxar, Earthstar Geographics"},
+                    "attribution": "Satellite imagery (c) Esri, Maxar, Earthstar Geographics"},
                 "esri-ref": {
                     "type": "raster",
                     "tiles": ["https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
@@ -366,7 +366,7 @@ def render_maplibre(
     const saveStateDebounced = debounce(saveStateToUrl, 400);
 
     // -------------------------------------------------------
-    // FIX 2: ID des ersten Symbol-Layers finden.
+    // Find the id of the first symbol layer.
     // Own layers are inserted BEFORE it, so that vector labels (cities,
     // countries) are still rendered ABOVE the data.
     // Raster styles have no symbol layers, so beforeId stays undefined and the layer is appended.
@@ -381,7 +381,7 @@ def render_maplibre(
 
     function addLayerSafe(spec) {{
       if (map.getLayer(spec.id)) return;
-      map.addLayer(spec, firstSymbolLayerId());  // immer VOR Labels
+      map.addLayer(spec, firstSymbolLayerId());  // always BEFORE labels
     }}
 
     // -------------------------------------------------------
@@ -432,7 +432,7 @@ def render_maplibre(
     }}
 
     // -------------------------------------------------------
-    // Quellen + Layer hinzufuegen (idempotent)
+    // Add sources and layers (idempotent)
     // -------------------------------------------------------
     function addSourcesAndLayers() {{
       const addSrc = (id, d) => {{ if (!map.getSource(id)) map.addSource(id, {{ type:'geojson', data:d }}); }};
@@ -499,7 +499,7 @@ def render_maplibre(
                  'circle-color':['coalesce',['get','color'],'#1d6fb8'] }} }});
 
       // SIMULATION
-      // Linie: realer GPS-Pfad (blau, gestrichelt)
+      // Line: the real GPS path (blue, dashed)
       addLayerSafe({{ id:'sim-paths', type:'line', source:'sim_paths',
         paint:{{ 'line-width':3,
                  'line-color':['coalesce',['get','color'],'#1565c0'],
@@ -516,7 +516,7 @@ def render_maplibre(
           'circle-stroke-color': '#fff'
         }} }});
 
-      // WOLF/LUCHS (BfN, besetzte 10x10km Rasterzellen als Polygone).
+      // WOLF/LYNX (BfN, occupied 10x10 km grid cells as polygons).
       // Deliberately only a thin outline instead of a solid fill: a cell
       // means "at least one C1/C2 record somewhere in here", not a precise
       // position. A solid fill would suggest an accuracy the data does not
@@ -592,15 +592,15 @@ def render_maplibre(
         const link = p.gbif_url ? '<br><a href=\\"'+p.gbif_url+'\\" target=\\"_blank\\" rel=\\"noopener\\">View record on GBIF</a>' : '';
         const img = p.image_url ? '<br><img src=\\"'+p.image_url+'\\" style=\\"max-width:220px;max-height:160px;border-radius:6px;margin-top:6px;display:block\\" loading=\\"lazy\\" onerror=\\"this.style.display=\\'none\\'\\" />' : '';
         pop(e,'<h3>'+(p.scientific_name||'Ursus arctos')+'</h3>'+
-              '<b>Land:</b> '+(p.country||'')+
-              '<br><b>Datum:</b> '+(p.event_date||'')+
-              '<br><b>Quelle:</b> '+(p.institution||'')+link+img); }});
+              '<b>Country:</b> '+(p.country||'')+
+              '<br><b>Date:</b> '+(p.event_date||'')+
+              '<br><b>Source:</b> '+(p.institution||'')+link+img); }});
       map.on('mouseenter','gbif-bears-points',()=>map.getCanvas().style.cursor='pointer');
       map.on('mouseleave','gbif-bears-points',()=>map.getCanvas().style.cursor='');
     }}
 
     // -------------------------------------------------------
-    // Bounds + Toggle + Kartenstil-Wechsel
+    // Bounds, toggles and base map change
     // -------------------------------------------------------
     // A coordinate counts as valid when it is not (0,0) or close to it.
     // Devices without GPS are stored as lat=0, lng=0 and would otherwise
@@ -631,13 +631,13 @@ def render_maplibre(
       return has ? b : null;
     }}
 
-    // Feste Zoom-Ziele pro System (vermeidet fitBounds-Probleme mit (0,0)-Koordinaten)
+    // Fixed zoom targets per subsystem (avoids fitBounds problems with (0,0) coordinates)
     const ZOOM_TARGETS = {{
       japan:      {{ center: [139.93, 37.48], zoom: 11 }},
       carpathian: {{ center: null, zoom: 8 }},   // dynamic via fitBounds (the data has valid coordinates)
-      simulation: {{ center: null, zoom: 8 }},   // dynamisch via fitBounds
-      wolf_lynx:  {{ center: null, zoom: 6 }},   // dynamisch, deckt ganz Deutschland ab
-      gbif_bears: {{ center: null, zoom: 5 }}    // dynamisch, deckt DE+RO ab
+      simulation: {{ center: null, zoom: 8 }},   // dynamic via fitBounds
+      wolf_lynx:  {{ center: null, zoom: 6 }},   // dynamic, covers all of Germany
+      gbif_bears: {{ center: null, zoom: 5 }}    // dynamic, covers DE and RO
     }};
 
     function navigateToGroup(groupKey) {{
@@ -695,7 +695,7 @@ def render_maplibre(
       const polySrc = map.getSource('draw_polygon_preview');
       if (!polySrc) return;
       if (pts.length < 2) {{ polySrc.setData({{type:'FeatureCollection', features:[]}}); return; }}
-      const ring = pts.length >= 3 ? [...pts, pts[0]] : pts; // erst ab 3 Punkten schliessen
+      const ring = pts.length >= 3 ? [...pts, pts[0]] : pts; // close the ring only from 3 points on
       const geomType = pts.length >= 3 ? 'Polygon' : 'LineString';
       const coords = pts.length >= 3 ? [ring] : ring;
       polySrc.setData({{ type:'FeatureCollection', features:[{{ type:'Feature', properties:{{}}, geometry:{{type:geomType, coordinates:coords}} }}] }});
@@ -843,7 +843,7 @@ def render_maplibre(
       map.on('moveend', saveStateDebounced);
     }}
 
-    // Initialer Start: map.on('load') feuert genau einmal
+    // Initial start: map.on('load') fires exactly once
     map.on('load', () => {{
       addSourcesAndLayers();
       applyVisibilityFromCheckboxes();

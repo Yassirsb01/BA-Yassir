@@ -30,7 +30,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 BASEMAP_STYLES = {
-    "Satellit": {
+    "Satellite": {
         "version": 8,
         "sources": {"esri-imagery": {
             "type": "raster",
@@ -75,7 +75,7 @@ def render_japan_map(
     start_camera: dict,
     bears: list[dict],
     real_events: list,
-    basemap: str = "Satellit",
+    basemap: str = "Satellite",
     detection_radius_m: float = 100,
     photo_counts: dict | None = None,
     height: int = 850,
@@ -508,6 +508,7 @@ def render_japan_map(
     const animState = {{
       playing:false, speed:60, tracks:[], startTime:null, endTime:null, currentTime:null,
       rafId:null, lastWallClock:null, activeCameraIds:new Set(), loggedDetections:[],
+      lastRenderWall:0,   // throttling of the geometry updates, see animLoop()
     }};
 
     function parseTime(v) {{ return v ? Date.parse(String(v).replace(' ','T')) : NaN; }}
@@ -551,8 +552,8 @@ def render_japan_map(
       return coords;
     }}
 
-    function fmtClock(t) {{ return new Date(t).toLocaleTimeString('de-DE', {{hour:'2-digit', minute:'2-digit'}}); }}
-    function fmtDate(t) {{ return new Date(t).toLocaleDateString('de-DE', {{day:'2-digit', month:'2-digit', year:'numeric'}}); }}
+    function fmtClock(t) {{ return new Date(t).toLocaleTimeString('en-GB', {{hour:'2-digit', minute:'2-digit'}}); }}
+    function fmtDate(t) {{ return new Date(t).toLocaleDateString('en-GB', {{day:'2-digit', month:'2-digit', year:'numeric'}}); }}
 
     function updateCameraFlashAndLog(t) {{
       const nowActive = new Set();
@@ -628,10 +629,24 @@ def render_japan_map(
         const tick = document.createElement('div');
         tick.className = 'real-event-tick';
         tick.style.left = pct + '%';
-        tick.title = new Date(t).toLocaleString('de-DE');
+        tick.title = new Date(t).toLocaleString('en-GB');
         container.appendChild(tick);
       }});
     }}
+
+    // Shortest gap between two geometry updates, in milliseconds.
+    // renderFrame() replaces two sources PER BEAR, so the cost grows with
+    // the number of simulated bears, and every replacement makes MapLibre
+    // redraw. With the 3D terrain switched on that redraw also covers the
+    // elevation mesh and the hillshade. At the display refresh rate of 60
+    // frames per second the browser cannot keep up and the animation
+    // stutters.
+    // Limiting the updates to 30 per second, and to 20 with terrain,
+    // keeps the motion smooth to the eye. The clock keeps advancing on
+    // every frame, so no position is skipped: only the number of
+    // intermediate pictures is reduced.
+    const RENDER_GAP_MS_FLAT = 33;
+    const RENDER_GAP_MS_TERRAIN = 50;
 
     function animLoop(nowWall) {{
       if (!animState.playing) return;
@@ -642,7 +657,11 @@ def render_japan_map(
       if (animState.currentTime >= animState.endTime) {{
         animState.currentTime = animState.endTime; renderFrame(); pauseAnimation(); return;
       }}
-      renderFrame();
+      const gap = uiState.terrain3d ? RENDER_GAP_MS_TERRAIN : RENDER_GAP_MS_FLAT;
+      if (nowWall - animState.lastRenderWall >= gap) {{
+        animState.lastRenderWall = nowWall;
+        renderFrame();
+      }}
       animState.rafId = requestAnimationFrame(animLoop);
     }}
 

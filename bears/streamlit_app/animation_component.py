@@ -54,7 +54,7 @@ _ESRI_IMAGERY_SOURCE = {
     "tiles": ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
     "tileSize": 256,
     "maxzoom": ESRI_NATIVE_MAXZOOM,
-    "attribution": "Luftbild: &copy; Esri, Maxar, Earthstar Geographics",
+    "attribution": "Satellite imagery: &copy; Esri, Maxar, Earthstar Geographics",
 }
 
 # Transparent label and boundary layer, to keep orientation on satellite
@@ -83,8 +83,8 @@ _SATELLITE_LABELS_STYLE = {
 }
 
 BASEMAP_STYLES = {
-    "Satellit": _SATELLITE_STYLE,
-    "Satellit + Beschriftung": _SATELLITE_LABELS_STYLE,
+    "Satellite": _SATELLITE_STYLE,
+    "Satellite + labels": _SATELLITE_LABELS_STYLE,
     "Positron": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
     "Liberty": "https://tiles.openfreemap.org/styles/liberty",
     "Dark Matter": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
@@ -113,7 +113,7 @@ def render_animation_map(
     carpathian: dict | None = None,
     alternatives: dict | None = None,
     simulated: dict | None = None,
-    basemap: str = "Satellit",
+    basemap: str = "Satellite",
     bear_label: str = "",
     dataset_label: str = "Carpathian Bears - GPS tracking (Romania)",
     source_label: str = "",
@@ -630,6 +630,10 @@ def render_animation_map(
       simTracks:[],   // one {{color, points:[{{t,lng,lat}}]}} per realisation
       startTime:null, endTime:null, currentTime:null, durHours:-1,
       rafId:null, lastWallClock:null,
+      // Throttling of the geometry updates, see animLoop(). lastFanStepTime
+      // remembers which step the alternative fan currently shows, so its
+      // points are only rewritten when the step actually changes.
+      lastRenderWall:0, lastFanStepTime:undefined,
     }};
 
     function parseTime(v) {{ return v ? Date.parse(String(v).replace(' ','T')) : NaN; }}
@@ -739,8 +743,8 @@ def render_animation_map(
       return null;
     }}
 
-    function fmtClock(t) {{ return new Date(t).toLocaleTimeString('de-DE', {{ hour:'2-digit', minute:'2-digit' }}); }}
-    function fmtDate(t)  {{ return new Date(t).toLocaleDateString('de-DE', {{ day:'2-digit', month:'2-digit', year:'numeric' }}); }}
+    function fmtClock(t) {{ return new Date(t).toLocaleTimeString('en-GB', {{ hour:'2-digit', minute:'2-digit' }}); }}
+    function fmtDate(t)  {{ return new Date(t).toLocaleDateString('en-GB', {{ day:'2-digit', month:'2-digit', year:'numeric' }}); }}
 
     function renderAnimationFrame() {{
       const pos = interpolatePosition(animState.track, animState.currentTime);
@@ -772,11 +776,18 @@ def render_animation_map(
 
       const stepTime = currentFanStepTime(animState.currentTime);
       const fanCoords = stepTime != null ? (animState.altFan.bySteptime[stepTime] || []) : [];
-      const fanFeatures = fanCoords.map(c => ({{ type:'Feature', properties:{{}}, geometry:{{type:'Point', coordinates:c}} }}));
+      // The endpoints of the fan belong to the step, not to the moment,
+      // so they only have to be rewritten when the step changes. The
+      // connecting lines start at the moving bear and are updated every
+      // time.
+      if (stepTime !== animState.lastFanStepTime) {{
+        animState.lastFanStepTime = stepTime;
+        const fanFeatures = fanCoords.map(c => ({{ type:'Feature', properties:{{}}, geometry:{{type:'Point', coordinates:c}} }}));
+        const fs = map.getSource('alt-fan'); if (fs) fs.setData({{type:'FeatureCollection', features:fanFeatures}});
+      }}
       const fanLines = (pos && fanCoords.length) ? fanCoords.map(c => ({{
         type:'Feature', properties:{{}}, geometry:{{type:'LineString', coordinates:[[pos.lng,pos.lat], c]}}
       }})) : [];
-      const fs = map.getSource('alt-fan'); if (fs) fs.setData({{type:'FeatureCollection', features:fanFeatures}});
       const fl = map.getSource('alt-fan-lines'); if (fl) fl.setData({{type:'FeatureCollection', features:fanLines}});
 
       const span = Math.max(1, animState.endTime - animState.startTime);
@@ -789,7 +800,7 @@ def render_animation_map(
       const clockSub = document.getElementById('clock-sub');
       if (clockSub) {{
         const idx = animState.track.filter(p => p.t <= animState.currentTime).length;
-        clockSub.textContent = fmtDate(animState.currentTime) + ' · Schritt ' + Math.max(1, idx) + '/' + animState.track.length;
+        clockSub.textContent = fmtDate(animState.currentTime) + ' · Step ' + Math.max(1, idx) + '/' + animState.track.length;
       }}
 
       const distEl = document.getElementById('metric-dist');
@@ -873,6 +884,21 @@ def render_animation_map(
       }});
     }}
 
+    // Shortest gap between two geometry updates, in milliseconds.
+    // Every call to renderAnimationFrame() replaces the data of six
+    // sources, and each of those makes MapLibre redraw. With the 3D
+    // terrain switched on that redraw also covers the elevation mesh and
+    // the hillshade, which is far more expensive than the flat view. At
+    // the display refresh rate of 60 frames per second the browser cannot
+    // keep up and the animation stutters.
+    // Limiting the updates to 30 per second, and to 20 with terrain,
+    // keeps the motion smooth to the eye while cutting the work roughly
+    // in half, or by two thirds. The clock keeps advancing on every
+    // frame, so the animation neither slows down nor skips positions:
+    // only the number of intermediate pictures is reduced.
+    const RENDER_GAP_MS_FLAT = 33;
+    const RENDER_GAP_MS_TERRAIN = 50;
+
     function animLoop(nowWall) {{
       if (!animState.playing) return;
       if (animState.lastWallClock == null) animState.lastWallClock = nowWall;
@@ -883,7 +909,11 @@ def render_animation_map(
         animState.currentTime = animState.endTime;
         renderAnimationFrame(); pauseAnimation(); return;
       }}
-      renderAnimationFrame();
+      const gap = uiState.terrain3d ? RENDER_GAP_MS_TERRAIN : RENDER_GAP_MS_FLAT;
+      if (nowWall - animState.lastRenderWall >= gap) {{
+        animState.lastRenderWall = nowWall;
+        renderAnimationFrame();
+      }}
       animState.rafId = requestAnimationFrame(animLoop);
     }}
 

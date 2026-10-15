@@ -28,6 +28,34 @@
 \graphicspath{{../abbildungen/}{./}}
 \usepackage{booktabs}
 \usepackage{amsmath}
+\usepackage{csquotes}
+
+% Quelltextauszuege. Bewusst sparsam eingesetzt: nur dort, wo der Code
+% etwas zeigt, das sich in Prosa nur umstaendlich sagen laesst.
+\usepackage{listings}
+\usepackage{xcolor}
+\definecolor{lstbg}{gray}{0.97}
+\definecolor{lstcomment}{gray}{0.40}
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  commentstyle=\color{lstcomment}\itshape,
+  keywordstyle=\bfseries,
+  backgroundcolor=\color{lstbg},
+  frame=single,
+  rulecolor=\color{black!25},
+  framesep=4pt,
+  numbers=none,
+  breaklines=true,
+  columns=fullflexible,
+  showstringspaces=false,
+  captionpos=b,
+  aboveskip=1.2em,
+  belowskip=1.2em,
+  literate={ä}{{\"a}}1 {ö}{{\"o}}1 {ü}{{\"u}}1 {Ä}{{\"A}}1
+           {Ö}{{\"O}}1 {Ü}{{\"U}}1 {ß}{{\ss}}1
+}
+\renewcommand{\lstlistingname}{Quelltext}
+\renewcommand{\lstlistlistingname}{Quelltextverzeichnis}
 \usepackage[hidelinks]{hyperref}
 
 \begin{document}

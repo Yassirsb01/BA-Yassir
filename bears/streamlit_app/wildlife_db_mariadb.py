@@ -68,6 +68,45 @@ class WildlifeDatabase:
         """Get a connection to the MariaDB database"""
         return mysql.connector.connect(**self.db_config)
 
+    def is_reachable(self, timeout_sec: float = 6.0) -> bool:
+        """
+        Report whether the database answers within timeout_sec seconds.
+
+        The time limit is enforced by a background thread rather than by
+        connection_timeout alone. A silently dropped packet, which is what
+        happens when the host is only reachable through the university VPN
+        and the VPN is down, makes the connection attempt wait for the full
+        connection_timeout of 15 seconds. In an interactive page that runs
+        again on every click, that delay is noticeable on every single
+        interaction, so the caller needs a shorter, hard bound.
+
+        The same pattern is used by check_db_reachable_bounded() in
+        activity_overlap.py; signal.alarm() is not an option because it
+        does not exist on Windows.
+
+        Returns True only if a connection was opened and closed within the
+        time limit. The probing thread is a daemon: if it is still running
+        when the limit passes it no longer blocks the caller.
+        """
+        import threading
+
+        result = {"ok": False}
+
+        def _try_connect():
+            try:
+                conn = self._get_connection()
+                conn.close()
+                result["ok"] = True
+            except Exception:
+                result["ok"] = False
+
+        t = threading.Thread(target=_try_connect, daemon=True)
+        t.start()
+        t.join(timeout_sec)
+        if t.is_alive():
+            return False
+        return result["ok"]
+
     def initialize_db(self):
         """Initialize the database with all required tables"""
         conn = None

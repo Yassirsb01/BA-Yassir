@@ -138,6 +138,21 @@ der sichtbare Ausschnitt, der nur die berührten Kacheln lädt.
 Eine Datenquelle versorgt mehrere Ebenen; die Darstellung wird über
 Paint- und Layout-Eigenschaften im Style-Dokument festgelegt.
 
+### `abb_a6_bildweg.pdf`
+**Abschnitt:** Anbindung der Bildextraktion / Vereinheitlichung der Datenhaltung
+
+Der Weg einer Aufnahme von der Kamera bis in die Karte, oben der
+Ausgangszustand mit zwei getrennten Tabellen, unten der jetzige mit einer
+gemeinsamen. Der gestrichelte Rahmen kennzeichnet die Bildextraktion als
+eigenen Prozess.
+
+**Quelle im Repository:** Tabellennamen, Spalten und Schlüssel aus
+`SHOW CREATE TABLE` (`image_metadata`, `wildlife_images`,
+`bears_images_unified`, `app_status`); Zeilenzahl 51 und die Aufteilung
+14 E-Mail / 37 Dateisystem aus `SELECT source, image_type, COUNT(*) ...`;
+Abfrageintervall 10 s aus `email_extractor/WildlifePictureExtractor.py`;
+Zwischenspeicher 30 s aus `streamlit_app/new_images_checker.py`.
+
 ---
 
 ## Neu erzeugen
@@ -145,9 +160,10 @@ Paint- und Layout-Eigenschaften im Style-Dokument festgelegt.
 ```
 python bericht_abbildungen/_erzeugung_teil_a.py     # A1 bis A5
 python bericht_abbildungen/_erzeugung_teil_b.py     # B1 bis B3
+python bericht_abbildungen/_erzeugung_bildweg.py    # A6
 ```
 
-Beide Skripte schreiben in das Verzeichnis aus der Umgebungsvariablen
+Alle Skripte schreiben in das Verzeichnis aus der Umgebungsvariablen
 `ABBDIR`, ersatzweise nach `bericht_abbildungen`. Mit gesetzter Variablen
 `VORSCHAU=1` entsteht zusätzlich je eine PNG-Vorschau zum schnellen
 Draufschauen. Teil A erwartet die Kennzahlen aus `GPSJSON`

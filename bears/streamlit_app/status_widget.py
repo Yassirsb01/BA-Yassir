@@ -6,17 +6,52 @@ import streamlit as st
 from datetime import datetime
 from new_images_checker import NewImagesChecker
 
+
+@st.cache_data(ttl=30, show_spinner=False)
+def database_reachable() -> bool:
+    """
+    Report whether the database answers, with a hard time limit.
+
+    Without this check the widget would wait for the full
+    connection_timeout of 15 seconds whenever the host is unreachable,
+    which is the normal situation while the university VPN is down. The
+    page runs again on every interaction, so that delay would apply to
+    every click.
+
+    The result is cached for 30 seconds, the same window the image queries
+    use. After connecting the VPN the status therefore returns on its own
+    within half a minute, or immediately via "Check now".
+    """
+    from wildlife_db_mariadb import WildlifeDatabase
+    return WildlifeDatabase().is_reachable(timeout_sec=6.0)
+
+
 def display_new_images_status(position="sidebar"):
     """
-    Zeigt Status neuer Bilder an
-    
+    Show the status of newly arrived images.
+
     Args:
-        position: 'sidebar' oder 'main' (wo anzeigen?)
+        position: 'sidebar' or 'main', selecting where to render.
     """
-    
+
+    container = st.sidebar if position == "sidebar" else st
+
+    if not database_reachable():
+        with container:
+            st.markdown("### New image status")
+            st.info(
+                "No connection to the database. Is the university VPN "
+                "active? The map and all local data remain usable."
+            )
+            if st.button("Try again", key="retry_images"):
+                database_reachable.clear()
+                st.rerun()
+        return
+
     checker = NewImagesChecker()
-    
-    # Hole letzte Pruefzeit aus DB (persistent!)
+
+    # Read the time of the last check from the database, so it survives
+    # a restart of the application
     last_check = checker.get_last_check_time()
     
     # If no check has ever been recorded, start from now
@@ -27,16 +62,14 @@ def display_new_images_status(position="sidebar"):
     # Time elapsed since the last check
     time_since_check = datetime.now() - last_check
     minutes_since_check = int(time_since_check.total_seconds() / 60)
-    
-    # Select the container
-    container = st.sidebar if position == "sidebar" else st
-    
+
     with container:
         st.markdown("### New image status")
-        
-        # Pruefe neue Bilder seit letztem Check
+
+        # Images of the last 24 hours (1440 minutes). The commented-out
+        # line would instead cover only the span since the last check.
         # new_images = checker.get_new_images_since(minutes_ago=minutes_since_check)
-        new_images = checker.get_new_images_since(minutes_ago=1440)  # Letzte 24 Stunden=1440min
+        new_images = checker.get_new_images_since(minutes_ago=1440)
         
         if new_images:
             st.success(f"{len(new_images)} new image(s) found.")
@@ -128,7 +161,7 @@ def display_detailed_dashboard():
                 col_info, col_time = st.columns([3, 1])
                 
                 with col_info:
-                    source_icon = "E-Mail" if img['source'] == 'email' else "Dateisystem"
+                    source_icon = "E-mail" if img['source'] == 'email' else "File system"
                     st.markdown(f"**{img['filename']}** ({source_icon})")
                     st.caption(f"Device {img['device_id']} • {img['image_type']}")
                 

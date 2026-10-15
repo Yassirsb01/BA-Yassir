@@ -78,7 +78,7 @@ class NewImagesChecker:
         Read the time of the last check from the database.
         
         Returns:
-            datetime object oder None
+            datetime object, or None if no check has been recorded yet
         """
         query = """
             SELECT status_value 

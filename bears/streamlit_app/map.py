@@ -19,7 +19,7 @@ browser without reloading the page.
 import streamlit as st
 from datetime import datetime
 
-from status_widget import display_new_images_status
+from status_widget import display_new_images_status, database_reachable
 import maplibre_component as ml
 from geojson_table_helper import geojson_to_dataframe
 
@@ -27,8 +27,8 @@ st.set_page_config(page_title="Wildlife Movement Analysis System", layout="wide"
 
 # ============================================================
 # Restore the map state from the URL, if present.
-# maplibre_component.py schreibt Center/Zoom/Basemap/sichtbare Layer bei
-# every interaction into the query parameters (window.parent.history.replaceState).
+# maplibre_component.py writes centre, zoom, base map and visible layers
+# on every interaction into the query parameters (window.parent.history.replaceState).
 # On a rerun, for example after applying a filter, they are already in the
 # URL and can be read back, so the map starts at the position last seen
 # rather than at the default view.
@@ -88,7 +88,13 @@ with st.sidebar:
     try:
         display_new_images_status(position="sidebar")
     except Exception as e:
-        st.error(f"Status widget unavailable (database connection?): {e}")
+        # The widget checks reachability itself and reports an unreachable
+        # database as a plain note. Anything arriving here is a different
+        # fault, so the technical detail stays available but behind an
+        # expander rather than as a red error message.
+        st.warning("Image status unavailable. Is the university VPN active?")
+        with st.expander("Technical details"):
+            st.caption(str(e))
     st.markdown("---")
 
 st.sidebar.caption("Layers and base map style are selected on the map itself (top left).")
@@ -103,9 +109,22 @@ simulation_data = None
 
 
 # ============================================================
-# JAPAN  (immer vorgeladen - leichtgewichtig)
+# JAPAN  (always preloaded, lightweight)
+#
+# The reachability check runs first and shares its cached result with the
+# status widget, so it costs no extra connection. Without it an
+# unreachable database would stall this block for the full
+# connection_timeout of 15 seconds, and because the page runs again on
+# every interaction that delay would apply to every click.
 # ============================================================
+class _DatabaseUnreachable(Exception):
+    """Raised instead of waiting for a connection that cannot succeed."""
+
+
 try:
+    if not database_reachable():
+        raise _DatabaseUnreachable()
+
     from japan_deterrents import JapanDeterrentSystem
 
     @st.cache_resource
@@ -175,7 +194,17 @@ try:
     st.sidebar.markdown("---")
 
 except Exception as e:
-    st.error(f"Error while loading the Japan subsystem: {e}")
+    # Same reasoning as for the status widget above: the Japan data lives
+    # in the MariaDB instance, which is only reachable through the
+    # university VPN. That is the common case, so it is named first. A
+    # fault of any other kind still shows its message, one click away.
+    st.warning(
+        "Japan data unavailable. Is the university VPN active? "
+        "All other layers remain usable."
+    )
+    if not isinstance(e, _DatabaseUnreachable):
+        with st.expander("Technical details"):
+            st.caption(str(e))
 
 
 # ============================================================

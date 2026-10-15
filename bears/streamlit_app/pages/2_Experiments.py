@@ -333,7 +333,7 @@ else:
             carpathian=carpathian_data,
             alternatives=alt_geojson,
             simulated=sim_geojson,
-            basemap="Satellit",
+            basemap="Satellite",
             bear_label=selected_bear_label,
             dataset_label="Carpathian Bears - GPS tracking (Romania)",
             source_label=source_label,

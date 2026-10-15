@@ -139,6 +139,22 @@ def _get_photo_counts():
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def _comparison_cached(n_runs: int, seed: int) -> dict:
+    """
+    The aggregated statistic, cached by its parameters.
+
+    It has to be cached. The call sits inside an expander, and Streamlit
+    runs the body of an expander on every rerun whether it is open or
+    closed. Without a cache, every click anywhere on this page would
+    recompute all simulation runs before anything else could be drawn.
+
+    The computation is deterministic for a given seed, so a cached result
+    is the same result, not an approximation of it.
+    """
+    return ao.compute_comparison(n_runs=n_runs, hours_per_run=48, seed=seed)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def _simulate(device_id: str, lat: float, lng: float, start_time_iso: str,
               n_bears: int, hours: int, use_terrain: bool, seed: int):
     """
@@ -345,7 +361,7 @@ else:
         n_runs = st.slider("Number of simulation runs (for the statistic)", 50, 500, 150, step=50)
 
         with st.spinner(f"Computing the statistic over {n_runs} runs..."):
-            stat_result = ao.compute_comparison(n_runs=n_runs, hours_per_run=48, seed=seed)
+            stat_result = _comparison_cached(int(n_runs), int(seed))
 
         if not stat_result["db_ok"]:
             st.info("MariaDB not reachable; no statistical comparison possible.")
@@ -357,13 +373,61 @@ else:
             col2.metric("95 % confidence interval", f"[{stat_result['ci_low']:.2f}, {stat_result['ci_high']:.2f}]")
             col3.metric("Real / simulated detections", f"{stat_result['n_real']} / {stat_result['n_sim']}")
 
+            st.caption(
+                "The overlap coefficient runs from 0 to 1. It is the share of the "
+                "daily rhythm that both sides have in common: 0 means the two are "
+                "active at completely different hours, 1 means they are "
+                "indistinguishable. The confidence interval gives the range in "
+                "which the true value is expected to lie."
+            )
+
+            # Streamlit renders a matplotlib figure at 200 dpi, so these
+            # two are about 1460 pixels wide. That is wider than the
+            # content column, so they would be stretched across the whole
+            # page and the reader would have to scroll past one figure to
+            # reach the next. An explicit display width keeps them at a
+            # readable size. Streamlit re-encodes the image at that
+            # width, so the figure stays legible but is not available at
+            # a higher resolution; for the report the figures are
+            # generated separately as vector files.
+            FIG_WIDTH_PX = 780
+            st.markdown("#### 1. When are they active?")
+            st.markdown(
+                "Each curve shows how the detections of one side are distributed "
+                "across the hours of the day, smoothed into a continuous line. "
+                "**Blue** is the real camera photographs from Japan, **orange** "
+                "the simulated bear driven by the Carpathian movement model. The "
+                "grey area between them is the part both have in common, and its "
+                "size is the overlap coefficient. Grey vertical bands mark the "
+                "night. A high peak means many detections at that hour, not more "
+                "animals."
+            )
             fig1 = ao.build_activity_overlap_figure(
                 stat_result["grid"], stat_result["f_real"], stat_result["f_sim"], stat_result["delta"],
                 stat_result["ci_low"], stat_result["ci_high"], stat_result["n_real"], stat_result["n_sim"],
             )
-            st.pyplot(fig1, clear_figure=True)
+            st.pyplot(fig1, clear_figure=True, width=FIG_WIDTH_PX)
 
+            st.markdown("#### 2. How reliable is that number?")
+            st.markdown(
+                "The real sample is small, so the overlap coefficient would come "
+                "out somewhat differently with a slightly different set of "
+                "photographs. To estimate that, the sample is drawn again at "
+                "random many times over and the coefficient recomputed each time. "
+                "The histogram counts how often each value occurred. The **black "
+                "line** is the value from the actual data, the **red dashed "
+                "lines** enclose the middle 95 percent of the results. A narrow "
+                "spread means the number is stable; a wide one means it should be "
+                "read with care."
+            )
             fig2 = ao.build_bootstrap_histogram_figure(
                 stat_result["boot_deltas"], stat_result["delta"], stat_result["ci_low"], stat_result["ci_high"],
             )
-            st.pyplot(fig2, clear_figure=True)
+            st.pyplot(fig2, clear_figure=True, width=FIG_WIDTH_PX)
+
+            st.caption(
+                "Both figures rest on a limited number of real photographs. They "
+                "compare daily rhythms only, not positions, and the simulated "
+                "side carries the behaviour of Carpathian brown bears rather than "
+                "that of Asian black bears."
+            )
